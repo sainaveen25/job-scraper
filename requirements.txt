@@ -1,0 +1,10 @@
+-e .
+requests>=2.32.0
+python-dotenv>=1.0.1
+defusedxml>=0.7.1
+lxml>=6.0.3
+cssselect>=1.4.0
+orjson>=3.11.8
+tld>=0.13.2
+w3lib>=2.4.1
+typing_extensions>=4.0.0

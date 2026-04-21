@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+COPY requirements.txt pyproject.toml README.md /app/
+COPY scrapling /app/scrapling
+COPY scraper /app/scraper
+COPY job_scraper /app/job_scraper
+
+RUN python -m pip install --no-cache-dir --upgrade pip && \
+    python -m pip install --no-cache-dir -r requirements.txt
+
+CMD ["python", "-m", "scraper.run_once"]
