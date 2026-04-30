@@ -22,6 +22,17 @@ class ScrapeAllSourcesResult:
     source_statuses: list[SourceStatus]
 
 
+def _attach_source_metadata(jobs: list[dict], status: SourceStatus) -> list[dict]:
+    enriched: list[dict] = []
+    for job in jobs:
+        copy = dict(job)
+        copy.setdefault("source", status.source)
+        copy["source_mode"] = status.mode
+        copy["source_status"] = status.status
+        enriched.append(copy)
+    return enriched
+
+
 def scrape_all_sources(search_queries: list[dict] | None = None) -> ScrapeAllSourcesResult:
     settings = get_job_scraper_settings()
     source_statuses: list[SourceStatus] = []
@@ -65,7 +76,12 @@ def scrape_all_sources(search_queries: list[dict] | None = None) -> ScrapeAllSou
             source_url,
             result.status.message,
         )
-        all_jobs.extend(apply_light_filter(result.jobs, max_job_age_hours=settings.max_job_age_hours))
+        all_jobs.extend(
+            apply_light_filter(
+                _attach_source_metadata(result.jobs, result.status),
+                max_job_age_hours=settings.max_job_age_hours,
+            )
+        )
 
     google_result = scrape_google_jobs_provider_with_status(
         queries=global_queries,
@@ -77,7 +93,12 @@ def scrape_all_sources(search_queries: list[dict] | None = None) -> ScrapeAllSou
         timeout=settings.request_timeout_seconds,
     )
     source_statuses.append(google_result.status)
-    all_jobs.extend(apply_light_filter(google_result.jobs, max_job_age_hours=settings.max_job_age_hours))
+    all_jobs.extend(
+        apply_light_filter(
+            _attach_source_metadata(google_result.jobs, google_result.status),
+            max_job_age_hours=settings.max_job_age_hours,
+        )
+    )
 
     failed_sources_count = sum(1 for item in source_statuses if item.status == "failed")
 

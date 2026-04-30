@@ -4,7 +4,6 @@ import timeit
 from statistics import mean
 
 import requests
-from autoscraper import AutoScraper
 from bs4 import BeautifulSoup
 from lxml import etree, html
 from mechanicalsoup import StatefulBrowser
@@ -13,6 +12,11 @@ from pyquery import PyQuery as pq
 from selectolax.parser import HTMLParser
 
 from scrapling import Selector as ScraplingSelector
+
+try:
+    from autoscraper import AutoScraper
+except ModuleNotFoundError:
+    AutoScraper = None
 
 large_html = (
     "<html><body>" + '<div class="item">' * 5000 + "</div>" * 5000 + "</body></html>"
@@ -114,6 +118,12 @@ def test_scrapling_text(request_html):
 
 @benchmark
 def test_autoscraper(request_html):
+    if AutoScraper is None:
+        try:
+            import pytest
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("Install the optional autoscraper dependency to run this benchmark.") from exc
+        pytest.skip("Optional benchmark dependency autoscraper is not installed.")
     # autoscraper by default returns elements text
     return AutoScraper().build(html=request_html, wanted_list=["Tipping the Velvet"])
 

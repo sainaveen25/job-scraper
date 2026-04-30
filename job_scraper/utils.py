@@ -11,6 +11,7 @@ import requests
 from scrapling.parser import Selector
 
 from job_scraper.extractors import normalize_text
+from job_scraper.normalization import normalize_country, normalize_location, normalize_state
 
 
 logger = logging.getLogger(__name__)
@@ -85,24 +86,27 @@ def clean_text(value: Any) -> str | None:
 
 
 def parse_state(location: str | None) -> str | None:
-    cleaned = clean_text(location)
-    if not cleaned:
-        return None
-    if "," in cleaned:
-        parts = [part.strip() for part in cleaned.split(",") if part.strip()]
-        if len(parts) >= 2:
-            return parts[-1]
-    return None
+    normalized = normalize_location(location)
+    return normalize_state(normalized.get("state"))
 
 
 def infer_country(*values: Any) -> str | None:
+    for value in values:
+        normalized = normalize_country(value)
+        if normalized and normalized != clean_text(value):
+            return normalized
+
     combined = " ".join(part for part in (clean_text(value) or "" for value in values) if part).strip()
     if not combined:
         return None
 
+    location_details = normalize_location(combined)
+    if location_details.get("country"):
+        return location_details["country"]
+
     for pattern, country in COUNTRY_PATTERNS:
         if pattern.search(combined):
-            return country
+            return normalize_country(country)
 
     return None
 

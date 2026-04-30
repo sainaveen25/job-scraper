@@ -225,12 +225,15 @@ def run_ingestion_cycle(*, use_sample: bool = False) -> dict[str, Any]:
     failed_sources_count = run_metadata.get("failed_sources_count", 0)
     source_statuses = run_metadata.get("source_statuses", [])
     source_status_counts: dict[str, int] = {}
+    source_jobs_found: dict[str, int] = {}
     direct_http_ok_count = 0
     for source_status in source_statuses:
         if not isinstance(source_status, dict):
             continue
         status = str(source_status.get("status", ""))
+        source_name = str(source_status.get("source", "unknown"))
         source_status_counts[status] = source_status_counts.get(status, 0) + 1
+        source_jobs_found[source_name] = source_jobs_found.get(source_name, 0) + int(source_status.get("jobsFound", 0))
         if source_status.get("mode") == "direct_http" and status == "ok":
             direct_http_ok_count += 1
     normalized_jobs, normalization_skipped = normalize_jobs(raw_jobs, default_source="scrapling")
@@ -251,6 +254,7 @@ def run_ingestion_cycle(*, use_sample: bool = False) -> dict[str, Any]:
         "failed_sources_count": failed_sources_count,
         "source_statuses": source_statuses,
         "source_status_counts": source_status_counts,
+        "source_jobs_found": source_jobs_found,
         "direct_http_ok_count": direct_http_ok_count,
         "duration_seconds": round(time.perf_counter() - started_at, 2),
         **ingest_result,
@@ -282,6 +286,10 @@ def print_summary(summary: dict[str, Any]) -> None:
         print("Source summary:")
         for status in ("ok", "zero_results", "blocked_403", "browser_required", "provider_required", "provider_disabled", "failed"):
             print(f"- {status}: {counts.get(status, 0)}")
+    if summary.get("source_jobs_found"):
+        print("Per-source jobs found:")
+        for source_name, jobs_found in sorted(summary["source_jobs_found"].items()):
+            print(f"- {source_name}: {jobs_found}")
     print(f"Global categories: {summary['global_category_count']}")
     print(f"Search queries: {summary['search_queries_count']}")
     print(f"Raw jobs found: {summary['raw_count']}")

@@ -1,62 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
-import re
 from typing import Any
 
-from job_scraper.extractors import is_job_like, normalize_text, tag_category
-
-
-_HOURS_AGO_RE = re.compile(r"(\d+)\s*(hour|hours|hr|hrs)\s+ago", re.IGNORECASE)
-_DAYS_AGO_RE = re.compile(r"(\d+)\s*(day|days)\s+ago", re.IGNORECASE)
-_MINUTES_AGO_RE = re.compile(r"(\d+)\s*(minute|minutes|min|mins)\s+ago", re.IGNORECASE)
-
-
-def _parse_posted_at(value: Any, now: datetime) -> datetime | None:
-    text = normalize_text(value)
-    if not text:
-        return None
-
-    if text.isdigit():
-        number = int(text)
-        if number > 10_000_000_000:
-            number = number / 1000
-        return datetime.fromtimestamp(number, tz=timezone.utc)
-
-    lowered = text.lower()
-    if lowered in {"today", "just now"}:
-        return now
-    if lowered == "yesterday":
-        return now - timedelta(days=1)
-
-    match = _MINUTES_AGO_RE.search(lowered)
-    if match:
-        return now - timedelta(minutes=int(match.group(1)))
-
-    match = _HOURS_AGO_RE.search(lowered)
-    if match:
-        return now - timedelta(hours=int(match.group(1)))
-
-    match = _DAYS_AGO_RE.search(lowered)
-    if match:
-        return now - timedelta(days=int(match.group(1)))
-
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    except ValueError:
-        pass
-
-    try:
-        parsed = parsedate_to_datetime(text)
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    except (TypeError, ValueError):
-        return None
+from job_scraper.extractors import is_job_like, normalize_text
+from job_scraper.normalization import choose_posted_at, infer_category, parse_posted_at
 
 
 def apply_light_filter(jobs: list[dict[str, Any]], max_job_age_hours: int = 24) -> list[dict[str, Any]]:
@@ -70,16 +18,28 @@ def apply_light_filter(jobs: list[dict[str, Any]], max_job_age_hours: int = 24) 
         if not is_job_like(title, description):
             continue
 
-        posted_at = _parse_posted_at(job.get("posted_at"), now)
-        if posted_at is None:
-            continue
+        freshness = choose_posted_at(job.get("posted_at"), scraped_at=now)
+        posted_at_text = freshness["posted_at"]
+        posted_at_tuple = parse_posted_at(posted_at_text, now=now)
+        posted_at = (
+            datetime.fromisoformat(posted_at_tuple[0].replace("Z", "+00:00"))
+            if posted_at_tuple[0]
+            else now
+        )
         if posted_at < now - timedelta(hours=max_job_age_hours):
             continue
 
         raw_payload = dict(job.get("raw_payload") or {})
-        raw_payload["category"] = tag_category(title, description)
+        category = infer_category(
+            title,
+            description,
+            list(job.get("required_skills") or []) + list(job.get("ats_keywords") or []),
+        )
+        raw_payload["category"] = category
         raw_payload["postedAtParsedUtc"] = posted_at.isoformat()
         job["raw_payload"] = raw_payload
+        job["category"] = category
+        job.update(freshness)
         filtered.append(job)
     return filtered
 

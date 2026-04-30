@@ -5,11 +5,40 @@ import logging
 import re
 
 from job_scraper.extractors import extract_keywords
-from job_scraper.utils import absolute_url, clean_text, fetch_html, first_text, infer_country, make_selector, maybe_fetch_with_browser, parse_state
+from job_scraper.normalization import choose_posted_at, normalize_location
+from job_scraper.utils import (
+    absolute_url,
+    clean_text,
+    fetch_html,
+    first_text,
+    infer_country,
+    make_selector,
+    maybe_fetch_with_browser,
+    parse_state,
+)
 
 
 logger = logging.getLogger(__name__)
 JSON_SCRIPT_RE = re.compile(r"<script[^>]*application/ld\+json[^>]*>(.*?)</script>", re.IGNORECASE | re.DOTALL)
+REQ_ID_RE = re.compile(r"(?:Requisition|Req(?:uisition)? ID)\s*[:#]?\s*([A-Z0-9-]+)", re.IGNORECASE)
+POSTED_RE = re.compile(
+    r"(?:Posted|Date Posted|Posted Date|Posted On|Date)\s*[:#]?\s*"
+    r"("
+    r"\d+\s*(?:minute|minutes|min|mins|hour|hours|hr|hrs|day|days)\s+ago"
+    r"|just posted|just now|posted today|today|yesterday"
+    r"|[A-Z][a-z]{2,8}\s+\d{1,2},\s+\d{4}"
+    r"|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"
+    r"|\d{4}-\d{2}-\d{2}(?:[T ][0-9:.+-Z]+)?"
+    r")",
+    re.IGNORECASE,
+)
+_SALARY_RE = re.compile(
+    r"(\$[\d,]+(?:\.\d+)?(?:\s*[-–]\s*\$[\d,]+(?:\.\d+)?)?(?:\s*/\s*(?:year|yr|hour|hr))?)",
+    re.IGNORECASE,
+)
+_LOCATION_RE = re.compile(
+    r"\b(Remote|Hybrid|On[- ]?[Ss]ite|[A-Za-z ]{2,30},\s*[A-Z]{2}(?:,\s*[A-Za-z ]+)?)",
+)
 
 
 def _extract_jobs_from_ld_json(html: str, source_url: str) -> list[dict]:
@@ -30,19 +59,25 @@ def _extract_jobs_from_ld_json(html: str, source_url: str) -> list[dict]:
             location = clean_text(entry.get("jobLocation", {}).get("address", {}).get("addressLocality"))
             description = clean_text(entry.get("description"))
             keywords = extract_keywords(description)
+            location_data = normalize_location(
+                location,
+                work_mode=keywords["work_mode"],
+            )
             jobs.append(
                 {
                     "title": title,
                     "company": clean_text(entry.get("hiringOrganization", {}).get("name")),
-                    "location": location,
-                    "state": parse_state(location),
-                    "country": infer_country(location, title, description),
+                    "location": location_data["location"],
+                    "city": location_data["city"],
+                    "state": location_data["state"] or parse_state(location),
+                    "country": location_data["country"] or infer_country(location, title, description),
                     "source": "workday",
                     "source_external_id": clean_text(entry.get("identifier", {}).get("value")),
                     "source_url": source_url,
                     "job_url": job_url,
                     "description": description,
                     **keywords,
+                    "work_mode": location_data["work_mode"] or keywords["work_mode"],
                     "employment_type": clean_text(entry.get("employmentType")) or keywords["employment_type"],
                     "posted_at": clean_text(entry.get("datePosted")),
                     "raw_payload": entry,
@@ -104,23 +139,51 @@ def scrape_workday_jobs(
         description = first_text(detail_selector, "main", "body")
         if not title or not detail_url:
             continue
-        location = clean_text(detail_selector.find_by_regex(r"(Remote|[A-Za-z ]+, [A-Z]{2})", first_match=True).text if detail_selector.find_by_regex(r"(Remote|[A-Za-z ]+, [A-Z]{2})", first_match=True) else None)
-        requisition = clean_text(detail_selector.find_by_regex(r"(Requisition|Req(uisition)? ID)\s*[:#]?\s*\w+", first_match=True).text if detail_selector.find_by_regex(r"(Requisition|Req(uisition)? ID)\s*[:#]?\s*\w+", first_match=True) else None)
-        posted_at = clean_text(detail_selector.find_by_regex(r"(Posted|Date Posted)\s*[:#]?\s*.+", first_match=True).text if detail_selector.find_by_regex(r"(Posted|Date Posted)\s*[:#]?\s*.+", first_match=True) else None)
+        page_text = first_text(detail_selector, "body") or ""
+        # Extract company from metadata or <title>; Workday titles are usually "Job Title - Company Name".
+        raw_title_tag = clean_text(detail_selector.css("title::text").get()) or ""
+        company = clean_text(
+            detail_selector.css('meta[property="og:site_name"]::attr(content)').get()
+            or detail_selector.css('meta[name="author"]::attr(content)').get()
+            or detail_selector.css('[data-automation-id="company"]::text').get()
+        )
+        if " - " in raw_title_tag:
+            parts = raw_title_tag.split(" - ", 1)
+            if not company and len(parts) == 2 and parts[1].strip():
+                company = parts[1].strip()
+        # Location: try CSS selectors first, then page-text regex
+        location = (
+            clean_text(detail_selector.css('[data-automation-id="locationTarget"]::text').get())
+            or clean_text(detail_selector.css('[class*="location"]::text').get())
+        )
+        if not location:
+            loc_match = _LOCATION_RE.search(page_text)
+            location = clean_text(loc_match.group(1)) if loc_match else None
+        req_match = REQ_ID_RE.search(page_text)
+        requisition = clean_text(req_match.group(1)) if req_match else None
+        posted_match = POSTED_RE.search(page_text)
+        posted_at = clean_text(posted_match.group(1)) if posted_match else None
+        posted_at = choose_posted_at(posted_at)["posted_at"] if posted_at else None
+        salary_match = _SALARY_RE.search(page_text)
+        salary_text = clean_text(salary_match.group(1)) if salary_match else None
         keywords = extract_keywords(description)
+        location_data = normalize_location(location, work_mode=keywords["work_mode"])
         jobs.append(
             {
                 "title": title,
-                "company": None,
-                "location": location,
-                "state": parse_state(location),
-                "country": infer_country(location, title, description),
+                "company": company,
+                "location": location_data["location"],
+                "city": location_data["city"],
+                "state": location_data["state"] or parse_state(location),
+                "country": location_data["country"] or infer_country(location, title, description),
                 "source": "workday",
                 "source_external_id": requisition,
                 "source_url": source_url,
                 "job_url": detail_url,
                 "description": description,
                 **keywords,
+                "work_mode": location_data["work_mode"] or keywords["work_mode"],
+                "salary_text": salary_text or keywords["salary_text"],
                 "posted_at": posted_at,
                 "raw_payload": {"detail_url": detail_url},
             }
