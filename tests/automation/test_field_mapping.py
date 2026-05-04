@@ -51,3 +51,20 @@ def test_sensitive_demographic_questions_require_review():
     known, unknown = map_fields([Field("Veteran status", FieldType.SELECT, selector="#veteran")], UserProfile())
     assert known == []
     assert unknown[0].reason == "sensitive_question_requires_review"
+
+
+def test_sensitive_memory_is_not_reused_for_demographic_questions():
+    memory = [
+        FieldMemoryEntry(
+            original_question="Veteran status",
+            normalized_question=normalize_question("Veteran status"),
+            answer="I decline to answer",
+            answer_type="select",
+            sensitive=True,
+        )
+    ]
+
+    known, unknown = map_fields([Field("Veteran status", FieldType.SELECT, selector="#veteran")], UserProfile(), memory)
+
+    assert known == []
+    assert unknown[0].reason == "sensitive_question_requires_review"

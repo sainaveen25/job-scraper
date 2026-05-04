@@ -92,6 +92,10 @@ coverage.xml
 scraper_failed_jobs/
 .pip-build-tracker/
 .tmp/
+extension/dist/
+extension/node_modules/
+extension/.tmp/
+extension/release/
 
 # Translations
 *.mo

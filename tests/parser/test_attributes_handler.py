@@ -13,8 +13,8 @@ class TestAttributesHandler:
         return """
         <html>
             <body>
-                <div id="main" 
-                     class="container active" 
+                <div id="main"
+                     class="container active"
                      data-config='{"theme": "dark", "version": 2.5}'
                      data-items='[1, 2, 3, 4, 5]'
                      data-invalid-json='{"broken: json}'
@@ -32,15 +32,15 @@ class TestAttributesHandler:
                      data-undefined="undefined">
                     Content
                 </div>
-                <input type="text" 
-                       name="username" 
-                       value="test@example.com" 
+                <input type="text"
+                       name="username"
+                       value="test@example.com"
                        placeholder="Enter email"
                        required
                        disabled>
-                <img src="/images/photo.jpg" 
-                     alt="Photo" 
-                     width="100" 
+                <img src="/images/photo.jpg"
+                     alt="Photo"
+                     width="100"
                      height="100"
                      loading="lazy">
             </body>
@@ -255,7 +255,7 @@ class TestAttributesHandler:
                 if isinstance(value, str) and (value.startswith('{') or value.startswith('[')):
                     json.loads(value)
                     json_attrs.append(key)
-            except:
+            except json.JSONDecodeError:
                 pass
 
         assert "data-config" in json_attrs
@@ -331,6 +331,6 @@ class TestAttributesHandler:
                     attrs = page.css("div")[0].attrib
                     # Should handle gracefully without crashing
                     assert isinstance(attrs, AttributesHandler)
-            except:
+            except Exception:
                 # Some malformed HTML might not parse at all
                 pass

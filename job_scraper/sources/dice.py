@@ -16,6 +16,16 @@ _POSTED_RE = re.compile(r"\b(\d+\s*(?:minute|minutes|min|mins|hour|hours|hr|hrs|
 _SALARY_RE = re.compile(r"(\$[\d,]+(?:\s*-\s*\$[\d,]+)?(?:\s*/\s*(?:hour|hr|year))?)", re.IGNORECASE)
 
 
+def _ld_address_value(ld_job: dict, key: str) -> str | None:
+    job_location = ld_job.get("jobLocation") or {}
+    if isinstance(job_location, list):
+        job_location = next((item for item in job_location if isinstance(item, dict)), {})
+    address = job_location.get("address") if isinstance(job_location, dict) else {}
+    if isinstance(address, list):
+        address = next((item for item in address if isinstance(item, dict)), {})
+    return clean_text(address.get(key)) if isinstance(address, dict) else None
+
+
 def _extract_ld_job(html: str) -> dict | None:
     for match in _LD_JSON_RE.findall(html):
         try:
@@ -71,7 +81,15 @@ def scrape_dice_jobs(source_url: str, timeout: int = 30) -> list[dict]:
         location = clean_text(
             selector.css('[data-cy="location"]::text').get()
             or selector.css('[class*="location"]::text').get()
-            or (ld_job.get("jobLocation", {}) or {}).get("address", {}).get("addressLocality")
+            or ", ".join(
+                part
+                for part in (
+                    _ld_address_value(ld_job, "addressLocality"),
+                    _ld_address_value(ld_job, "addressRegion"),
+                    _ld_address_value(ld_job, "addressCountry"),
+                )
+                if part
+            )
         )
         company = clean_text(
             (ld_job.get("hiringOrganization") or {}).get("name")

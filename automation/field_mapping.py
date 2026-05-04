@@ -38,6 +38,8 @@ FIELD_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("notice_period", ("notice period",)),
 )
 
+PROTECTED_DEMOGRAPHIC_PATTERN = _SENSITIVE_RE
+
 
 def normalize_question(label: str | None) -> str:
     text = (label or "").casefold()
@@ -80,6 +82,8 @@ def map_fields(
         normalize_question(entry.normalized_question or entry.original_question): entry
         for entry in (memory_entries or [])
         if entry.answer not in (None, "")
+        and not entry.sensitive
+        and not is_sensitive_question(entry.original_question)
     }
     known: list[MappedField] = []
     unknown: list[UnknownField] = []

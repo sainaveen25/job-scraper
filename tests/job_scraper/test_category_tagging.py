@@ -46,6 +46,7 @@ from job_scraper.normalization import infer_category
 
     # frontend
     ("Frontend Developer", "React and TypeScript applications", "frontend"),
+    ("Junior Front-End Developer", "React and TypeScript applications", "frontend"),
     ("UI Engineer", "Angular front-end development", "frontend"),
 
     # full_stack
@@ -56,13 +57,43 @@ from job_scraper.normalization import infer_category
     ("Machine Learning Engineer", "LLM fine-tuning and inference", "ai_ml"),
     ("AI Engineer", "Artificial intelligence and neural networks", "ai_ml"),
 
-    # product
-    ("Product Manager", "Roadmap planning and product delivery", "product"),
-    ("Product Owner", "Agile product ownership", "product"),
+    # data titles should not get stolen by incidental security words
+    ("Senior Data Scientist", "Consumer app fraud and security analytics", "data_analytics"),
+
+    # electrical / electronics / telecom / power
+    ("Electrical Engineer", "Circuit design and electrical systems", "electrical_engineering"),
+    ("Electronics Engineer", "PCB schematic capture and circuit design", "electronics_engineering"),
+    ("Communication Engineer", "RF communication systems and signal processing", "telecom_engineering"),
+    ("Relay Designer", "Protection relay and substation design", "power_systems"),
+    ("RF Engineer", "Antenna and radio frequency systems", "telecom_engineering"),
+
+    # controls / embedded / hardware / validation
+    ("Controls Engineer", "PLC, SCADA, and control systems", "controls_automation"),
+    ("Embedded Systems Engineer", "RTOS firmware on microcontrollers", "embedded_firmware"),
+    ("Firmware Engineer", "Embedded C and microcontroller firmware", "embedded_firmware"),
+    ("Hardware Engineer", "FPGA board design and validation", "hardware_engineering"),
+    ("Hardware Validation Engineer", "Validation and verification test plans", "validation_testing"),
+
+    # mechanical / manufacturing / industrial / robotics
+    ("Mechanical Engineer", "CAD and product design", "mechanical_engineering"),
+    ("Manufacturing Engineer", "Lean manufacturing processes", "manufacturing_engineering"),
+    ("Process Engineer", "Production process engineering", "manufacturing_engineering"),
+    ("Industrial Engineer", "Six sigma process improvement", "industrial_engineering"),
+    ("Robotics Engineer", "Robotics and mechatronics automation", "robotics_mechatronics"),
+
+    # civil / energy / other STEM
+    ("Civil Engineer", "Transportation infrastructure", "civil_engineering"),
+    ("Structural Engineer", "Structural steel design", "structural_engineering"),
+    ("Environmental Engineer", "Water resources compliance", "environmental_engineering"),
+    ("Renewable Energy Engineer", "Solar battery energy systems", "energy_engineering"),
+    ("Biomedical Engineer", "Medical device development", "biomedical_engineering"),
+    ("Research Engineer", "R&D prototype testing", "research_engineering"),
+    ("Systems Engineer", "Systems engineering requirements", "systems_engineering"),
+    ("Systems Analyst", "Technical systems analysis", "systems_engineering"),
 
     # support
-    ("Support Engineer", "Technical support and help desk", "support"),
-    ("Help Desk Technician", "Desktop support IT help desk", "support"),
+    ("Support Engineer", "Technical support and help desk", "technical_support"),
+    ("Field Engineer", "Technical field support for lab systems", "technical_support"),
 
     # software_engineering (catch-all for software/backend)
     ("Software Engineer", "Application developer backend systems", "software_engineering"),

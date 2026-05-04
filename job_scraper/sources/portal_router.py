@@ -32,7 +32,7 @@ from job_scraper.sources.linkedin import scrape_linkedin_jobs
 from job_scraper.sources.provider_sources import scrape_job_board_provider
 from job_scraper.sources.remoteok import scrape_remoteok_jobs
 from job_scraper.sources.weworkremotely import scrape_weworkremotely_jobs
-from job_scraper.sources.workday import scrape_workday_jobs
+from job_scraper.sources.workday import is_workday_board_url, scrape_workday_jobs
 from job_scraper.sources.ziprecruiter import scrape_ziprecruiter_jobs
 
 
@@ -167,7 +167,13 @@ def _scrape_provider_source(
         jobs = direct_scraper(source_url, timeout=timeout)
     except Exception as exc:
         if _is_blocked_http_error(exc):
-            message = f"{source_type.title()} direct scraping returned 403. Configure provider API to enable this source."
+            if source_type == "indeed":
+                message = "Indeed direct scraping blocked; provider/API path required for reliable production use."
+            else:
+                message = (
+                    f"{source_type.title()} direct scraping returned 403. "
+                    f"Provider/API access is required for reliable production use; configure {source_type.upper()}_PROVIDER."
+                )
             logger.info(message)
             return _result(source_type, source_url, PROVIDER_API, BLOCKED_403, [], message)
         logger.info("%s direct scrape failed and provider is disabled for %s: %s", source_type, source_url, exc)
@@ -177,7 +183,7 @@ def _scrape_provider_source(
             PROVIDER_API,
             PROVIDER_REQUIRED,
             [],
-            f"{source_type.title()} requires provider/API access for production. Configure {source_type.upper()}_PROVIDER.",
+            f"{source_type.title()} direct scraping is best-effort. Provider/API access is required for reliable production use; configure {source_type.upper()}_PROVIDER.",
         )
 
     if jobs:
@@ -188,7 +194,7 @@ def _scrape_provider_source(
         PROVIDER_API,
         PROVIDER_REQUIRED,
         [],
-        f"{source_type.title()} needs provider/API access for production. Configure {source_type.upper()}_PROVIDER.",
+        f"{source_type.title()} direct scraping returned no stable results. Provider/API access is required for reliable production use; configure {source_type.upper()}_PROVIDER.",
     )
 
 
@@ -233,12 +239,14 @@ def route_and_scrape_source_with_status(
             )
             if jobs:
                 return _result(source_type, source_url, BROWSER_RENDERED, OK, jobs, "Workday returned jobs.")
-            if not enable_browser_fetcher:
+            if is_workday_board_url(source_url) and not enable_browser_fetcher:
                 message = "Workday requires browser rendering. Enable ENABLE_BROWSER_FETCHER=true."
                 logger.info("%s URL=%s", message, source_url)
                 return _result(source_type, source_url, BROWSER_RENDERED, BROWSER_REQUIRED, [], message)
-            message = "Workday browser rendering returned no jobs or browser dependencies are unavailable."
-            return _result(source_type, source_url, BROWSER_RENDERED, BROWSER_REQUIRED, [], message)
+            if is_workday_board_url(source_url):
+                message = "Workday browser rendering returned no jobs or browser dependencies are unavailable."
+                return _result(source_type, source_url, BROWSER_RENDERED, BROWSER_REQUIRED, [], message)
+            return _result(source_type, source_url, BROWSER_RENDERED, ZERO_RESULTS, [], "Workday detail page returned zero jobs.")
         elif source_type in PROVIDER_REQUIRED_SOURCES:
             return _scrape_provider_source(source_type, source_url, settings, timeout)
         elif source_type in {"monster", "talent"}:
@@ -253,7 +261,13 @@ def route_and_scrape_source_with_status(
             jobs = scrape_generic_jobs(source_url, timeout=timeout)
     except Exception as exc:
         if source_type in PROVIDER_REQUIRED_SOURCES and _is_blocked_http_error(exc):
-            message = f"{source_type.title()} direct scraping returned 403. Configure provider API to enable this source."
+            if source_type == "indeed":
+                message = "Indeed direct scraping blocked; provider/API path required for reliable production use."
+            else:
+                message = (
+                    f"{source_type.title()} direct scraping returned 403. "
+                    f"Provider/API access is required for reliable production use; configure {source_type.upper()}_PROVIDER."
+                )
             return _result(source_type, source_url, PROVIDER_API, BLOCKED_403, [], message)
         logger.warning("Source failed for %s: %s", source_url, exc)
         return _result(source_type, source_url, mode, FAILED, [], f"Source failed: {exc}")

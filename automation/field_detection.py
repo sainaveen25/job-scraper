@@ -23,12 +23,23 @@ FIELD_SCAN_SCRIPT = r"""
     }
     const label = el.closest('label');
     if (label) bits.push(label.innerText);
+    const fieldset = el.closest('fieldset');
+    if (fieldset) {
+      const legend = fieldset.querySelector('legend');
+      if (legend) bits.push(legend.innerText);
+    }
     bits.push(el.getAttribute('aria-label'));
+    if (el.getAttribute('aria-labelledby')) {
+      el.getAttribute('aria-labelledby').split(/\s+/).forEach((id) => {
+        const labelled = document.getElementById(id);
+        if (labelled) bits.push(labelled.innerText);
+      });
+    }
     bits.push(el.getAttribute('placeholder'));
     bits.push(el.name);
-    const wrapper = el.closest('[data-qa], [data-testid], .field, .form-field, .application-question, .question');
+    const wrapper = el.closest('[data-qa], [data-testid], [role="group"], .field, .form-field, .application-question, .question, .form-group, .input-wrapper');
     if (wrapper) {
-      const wrapperLabel = wrapper.querySelector('label, legend, .label, .question, [class*="label"]');
+      const wrapperLabel = wrapper.querySelector('label, legend, .label, .question, [class*="label"], [data-qa*="label"], [data-testid*="label"]');
       if (wrapperLabel) bits.push(wrapperLabel.innerText);
     }
     return bits.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
@@ -57,7 +68,12 @@ FIELD_SCAN_SCRIPT = r"""
       field_type: type,
       selector: selectorFor(el, index),
       name: el.name || null,
-      required: Boolean(el.required || el.getAttribute('aria-required') === 'true'),
+      required: Boolean(
+        el.required ||
+        el.getAttribute('aria-required') === 'true' ||
+        el.getAttribute('data-required') === 'true' ||
+        el.closest('[aria-required="true"], [data-required="true"], .required')
+      ),
       options,
       value: el.value || null,
     });

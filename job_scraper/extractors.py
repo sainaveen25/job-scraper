@@ -49,21 +49,64 @@ TECH_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("AI", r"\bartificial intelligence\b|\bai\b"),
     ("LLM", r"\bllm\b|\blarge language model"),
     ("Cybersecurity", r"\bcybersecurity\b|\bsecurity\b"),
+    ("MATLAB", r"\bmatlab\b"),
+    ("Simulink", r"\bsimulink\b"),
+    ("CAD", r"\bcad\b|\bsolidworks\b|\bautocad\b|\bcreo\b|\bcatia\b"),
+    ("PLC", r"\bplc\b|\bprogrammable logic controller\b"),
+    ("SCADA", r"\bscada\b"),
+    ("Controls", r"\bcontrols?\b|\bcontrol systems?\b"),
+    ("Power Systems", r"\bpower systems?\b|\bsubstation\b|\btransmission\b|\bdistribution\b"),
+    ("Relay Protection", r"\brelay\b|\bprotection and control\b|\bprotective relaying\b"),
+    ("Circuit Design", r"\bcircuit design\b|\bpcb\b|\bschematic\b"),
+    ("Embedded Systems", r"\bembedded\b|\bmicrocontroller\b|\brtos\b"),
+    ("Firmware", r"\bfirmware\b"),
+    ("RF", r"\brf\b|\bradio frequency\b|\bantenna\b"),
+    ("Signal Processing", r"\bsignal processing\b|\bdsp\b"),
+    ("Hardware", r"\bhardware\b|\bfpga\b|\basic\b"),
+    ("Validation", r"\bvalidation\b|\bverification\b|\btest engineer\b"),
+    ("Manufacturing", r"\bmanufacturing\b|\bprocess engineering\b|\blean\b|\bsix sigma\b"),
+    ("Robotics", r"\brobotics?\b|\bmechatronics\b"),
+    ("Civil Engineering", r"\bcivil\b|\bstructural\b|\btransportation\b|\binfrastructure\b"),
+    ("Environmental Engineering", r"\benvironmental\b|\bwater resources\b"),
+    ("Energy", r"\brenewable energy\b|\benergy systems?\b|\bsolar\b|\bwind\b|\bbattery\b"),
+    ("Biomedical", r"\bbiomedical\b|\bmedical device\b"),
+    ("Lab Automation", r"\blab automation\b|\blaboratory automation\b"),
 )
 
 CATEGORY_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("devops", ("devops", "ci/cd", "jenkins", "kubernetes", "terraform")),
-    ("software_engineering", ("software", "backend", "frontend", "full stack", "developer", "engineer")),
-    ("data", ("data", "analytics", "bi", "etl", "sql", "tableau", "power bi")),
-    ("business", ("business analyst", "business analysis", "operations")),
+    ("backend", ("backend", "back end", "api engineer", "java developer", "python developer")),
+    ("frontend", ("frontend", "front end", "ui engineer", "react developer", "angular developer")),
+    ("full_stack", ("full stack", "fullstack")),
+    ("software_engineering", ("software", "application developer", "software developer")),
+    ("data_engineering", ("data engineer", "etl", "pipeline", "spark", "databricks")),
+    ("data_analytics", ("data analyst", "analytics", "bi", "sql", "tableau", "power bi", "reporting")),
+    ("business_analysis", ("business analyst", "business analysis", "business systems analyst")),
     ("cloud", ("cloud", "aws", "azure", "gcp", "terraform")),
     ("qa", ("qa", "quality assurance", "selenium", "playwright", "cypress", "test automation")),
-    ("security", ("security", "cybersecurity", "iam", "soc")),
-    ("product", ("product manager", "product management")),
-    ("project", ("project manager", "project management", "scrum")),
+    ("cybersecurity", ("security", "cybersecurity", "iam", "soc")),
     ("salesforce", ("salesforce",)),
     ("workday", ("workday", "hcm")),
-    ("it_support", ("it support", "help desk", "systems administrator", "sysadmin")),
+    ("electrical_engineering", ("electrical engineer", "electrical engineering")),
+    ("electronics_engineering", ("electronics engineer", "electronics engineering")),
+    ("telecom_engineering", ("telecom", "communication engineer", "communication systems", "rf engineer", "signal processing")),
+    ("power_systems", ("power systems", "substation", "relay", "protection and control", "transmission")),
+    ("controls_automation", ("controls engineer", "control systems", "automation engineer", "plc", "scada")),
+    ("hardware_engineering", ("hardware engineer", "circuit design", "pcb", "fpga", "asic")),
+    ("validation_testing", ("validation engineer", "test engineer", "verification engineer")),
+    ("embedded_firmware", ("embedded", "firmware", "rtos", "microcontroller")),
+    ("mechanical_engineering", ("mechanical engineer", "mechanical engineering", "cad", "solidworks")),
+    ("manufacturing_engineering", ("manufacturing engineer", "process engineer", "manufacturing")),
+    ("industrial_engineering", ("industrial engineer", "lean", "six sigma")),
+    ("robotics_mechatronics", ("robotics", "mechatronics")),
+    ("civil_engineering", ("civil engineer", "civil engineering", "transportation engineer")),
+    ("structural_engineering", ("structural engineer", "structural engineering")),
+    ("environmental_engineering", ("environmental engineer", "water resources")),
+    ("energy_engineering", ("energy systems", "renewable energy", "solar", "wind", "battery")),
+    ("biomedical_engineering", ("biomedical engineer", "medical device")),
+    ("research_engineering", ("research engineer", "r&d engineer")),
+    ("systems_engineering", ("systems engineer", "systems engineering", "systems analyst", "technical program manager")),
+    ("technical_support", ("support engineer", "technical support", "field engineer", "help desk", "systems administrator", "sysadmin")),
 )
 
 JOB_HINTS = ("job", "career", "position", "role", "responsibilities", "requirements", "apply")
@@ -89,6 +132,30 @@ SALARY_PATTERN = re.compile(
 )
 PREFERRED_PATTERN = re.compile(r"\bpreferred\b|\bnice to have\b|\bbonus\b", re.IGNORECASE)
 WHITESPACE_RE = re.compile(r"\s+")
+NON_STEM_TITLE_RE = re.compile(
+    r"\b("
+    r"cashier|sales associate|retail associate|restaurant|waiter|waitress|server|bartender|barista|"
+    r"recruiter|talent acquisition|office assistant|administrative assistant|admin assistant|"
+    r"customer service representative|customer support representative|beauty|salon|hair stylist|"
+    r"account executive|accounting specialist|lease accounting|revenue accounting|marketing manager|"
+    r"legal assistant|paralegal|bookkeeper|loan officer|warehouse specialist|warehouse associate|"
+    r"global affairs|operating partner|school success|graphic designer|product manager|product owner|"
+    r"director of industrial|investment banking analyst|financial analyst|finance analyst|accounting analyst|"
+    r"data entry|data entry clerk"
+    r")\b",
+    re.IGNORECASE,
+)
+STEM_SIGNAL_RE = re.compile(
+    r"\b("
+    r"engineer|engineering|developer|architect|analyst|scientist|technician|technologist|"
+    r"technical|systems?|software|data|analytics?|ai|machine learning|llm|cloud|devops|security|qa|"
+    r"electrical|electronics?|relay|relay designer|controls?|power systems?|substation|embedded|hardware|firmware|"
+    r"rf|communication systems?|signal processing|mechanical|manufacturing|process|industrial|"
+    r"automation|robotics?|mechatronics|civil|structural|transportation|environmental|energy|"
+    r"renewable|biomedical|research|validation|testing|laboratory|lab"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def normalize_text(value: Any) -> str:
@@ -147,6 +214,8 @@ def is_job_like(title: str | None, description: str | None) -> bool:
     description_text = normalize_text(description).lower()
     if len(title_text.split()) < 2:
         return False
-    if any(hint in title_text for hint in ("job", "engineer", "developer", "analyst", "manager", "specialist", "administrator")):
+    if NON_STEM_TITLE_RE.search(title_text):
+        return False
+    if STEM_SIGNAL_RE.search(f"{title_text} {description_text}"):
         return True
-    return any(hint in description_text for hint in JOB_HINTS)
+    return any(hint in description_text for hint in JOB_HINTS) and not NON_STEM_TITLE_RE.search(title_text)

@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "ApplyMate AI Autofill Assistant",
+  "short_name": "ApplyMate AI",
+  "description": "Assisted job application autofill for ApplyMate sessions with explicit submit confirmation.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "114",
+  "permissions": ["activeTab", "scripting", "sidePanel", "storage", "tabs"],
+  "host_permissions": [
+    "https://boards.greenhouse.io/*",
+    "https://job-boards.greenhouse.io/*",
+    "https://jobs.lever.co/*",
+    "https://*.myworkdayjobs.com/*",
+    "https://*.lovable.app/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "optional_host_permissions": ["https://*/*"],
+  "background": {
+    "service_worker": "background/service_worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open ApplyMate AI"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/index.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://boards.greenhouse.io/*",
+        "https://job-boards.greenhouse.io/*",
+        "https://jobs.lever.co/*",
+        "https://*.myworkdayjobs.com/*"
+      ],
+      "js": ["content/content_script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "assets/icon16.png",
+    "32": "assets/icon32.png",
+    "48": "assets/icon48.png",
+    "128": "assets/icon128.png"
+  }
+}

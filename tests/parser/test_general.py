@@ -295,7 +295,7 @@ def test_large_html_parsing_performance():
 
     start_time = time.time()
     parsed = Selector(large_html, adaptive=False)
-    elements = parsed.css(".item")
+    parsed.css(".item")
     end_time = time.time()
 
     # assert len(elements) == 5000  # GitHub actions don't like this line

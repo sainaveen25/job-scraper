@@ -470,7 +470,7 @@ class TestProcessRequest:
     async def test_callback_exception_calls_on_error(self):
         async def bad_callback(response) -> AsyncGenerator:
             raise ValueError("callback boom")
-            yield  # noqa: unreachable
+            yield  # keep this as an async generator
 
         spider = MockSpider()
         engine = _make_engine(spider=spider)
@@ -505,8 +505,6 @@ class TestProcessRequest:
 
     @pytest.mark.asyncio
     async def test_uses_parse_when_no_callback(self):
-        items_seen = []
-
         async def custom_parse(response) -> AsyncGenerator:
             yield {"from": "custom_parse"}
 
@@ -779,7 +777,7 @@ class TestCrawl:
         assert engine.stats.requests_count >= 1
 
         # Run second crawl - stats should reset
-        stats = await engine.crawl()
+        await engine.crawl()
         # Items are cleared on each crawl
         assert engine.paused is False
 
@@ -884,7 +882,7 @@ class TestPauseDuringCrawl:
         # Request pause immediately - the engine will stop as soon as active tasks complete
         engine._pause_requested = True
 
-        stats = await engine.crawl()
+        await engine.crawl()
         # Should stop without processing everything
         assert engine._running is False
 

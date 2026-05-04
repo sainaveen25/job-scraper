@@ -56,7 +56,7 @@ class TestAsyncDynamicSession:
             response = await session.fetch(urls["basic"])
             assert response.status == 200
             assert session.page_pool.pages_count == 0
-            
+
             # The second request should reuse the page
             response = await session.fetch(urls["html"])
             assert response.status == 200

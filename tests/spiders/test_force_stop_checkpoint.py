@@ -259,7 +259,6 @@ class TestForceStopCheckpointPreservation:
 
             checkpoint_path = Path(tmpdir) / "checkpoint.pkl"
             assert checkpoint_path.exists(), "First run should create checkpoint"
-            first_checkpoint_size = checkpoint_path.stat().st_size
 
             # Second run: force-stop (the fix ensures checkpoint is updated, not deleted)
             spider2 = SlowSpider(num_urls=10)

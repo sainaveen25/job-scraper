@@ -119,7 +119,7 @@ class TestNormalization:
         ("QA Automation Engineer", "Selenium and Playwright tests", "qa"),
         ("Business Analyst", "Requirements and reporting", "business_analysis"),
         ("Cloud Architect", "AWS and Azure infrastructure", "cloud"),
-        ("Product Manager", "Roadmap and delivery", "product"),
+        ("Technical Program Manager", "Systems engineering delivery", "systems_engineering"),
     ])
     def test_infer_category(self, title, description, expected_category):
         result = infer_category(title, description)

@@ -128,11 +128,21 @@ ROLE_SYNONYMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("business analyst", ("business analyst", "business systems analyst")),
     ("salesforce developer", ("salesforce developer", "salesforce engineer", "apex developer", "lightning developer")),
     ("workday analyst", ("workday analyst", "workday consultant", "workday hcm analyst")),
+    ("electrical engineer", ("electrical engineer", "power systems engineer", "relay engineer")),
+    ("relay designer", ("relay designer", "protection relay designer", "protection and control designer")),
+    ("rf engineer", ("rf engineer", "radio frequency engineer", "communication systems engineer")),
+    ("hardware engineer", ("hardware engineer", "hardware validation engineer", "validation engineer")),
+    ("controls engineer", ("controls engineer", "automation engineer", "plc engineer", "scada engineer")),
+    ("mechanical engineer", ("mechanical engineer", "product design engineer", "cad engineer")),
+    ("robotics engineer", ("robotics engineer", "mechatronics engineer")),
+    ("civil engineer", ("civil engineer", "structural engineer", "transportation engineer")),
+    ("biomedical engineer", ("biomedical engineer", "medical device engineer")),
 )
 
 CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("salesforce", ("salesforce",)),
     ("workday", ("workday", "hcm")),
+    ("data_analytics", ("data scientist",)),
     ("cybersecurity", ("cybersecurity", "security engineer", "soc analyst", "iam", "application security")),
     ("devops", ("devops", "site reliability", "sre", "kubernetes", "terraform", "platform engineer")),
     ("cloud", ("cloud engineer", "aws", "azure", "gcp", "cloud architect")),
@@ -140,15 +150,55 @@ CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("data_engineering", ("data engineer", "etl", "pipeline", "spark", "databricks")),
     ("data_analytics", ("data analyst", "analytics", "bi developer", "tableau", "power bi", "reporting analyst")),
     ("business_analysis", ("business analyst", "business analysis", "business systems analyst")),
-    ("frontend", ("frontend", "front end", "ui engineer", "react developer", "angular developer")),
+    ("frontend", ("frontend", "front-end", "front end", "ui engineer", "react developer", "angular developer")),
     ("full_stack", ("full stack", "fullstack")),
     ("ai_ml", ("machine learning", "ml engineer", "ai engineer", "llm", "artificial intelligence")),
-    ("product", ("product manager", "product owner")),
-    ("project_management", ("project manager", "project management", "program manager", "scrum master")),
-    ("support", ("support engineer", "help desk", "technical support", "desktop support")),
+    ("power_systems", ("power systems", "substation", "relay designer", "relay design", "protective relay", "protection and control", "transmission engineer", "distribution engineer")),
+    ("controls_automation", ("controls engineer", "control systems", "automation engineer", "plc", "scada", "instrumentation and controls")),
+    ("hardware_engineering", ("hardware engineer", "hardware engineering", "fpga", "asic", "board design")),
+    ("validation_testing", ("validation engineer", "verification engineer", "test engineer", "hardware validation", "systems test")),
+    ("embedded_firmware", ("embedded systems", "embedded engineer", "firmware", "rtos", "microcontroller")),
+    ("telecom_engineering", ("rf engineer", "radio frequency", "telecom", "communication engineer", "communication systems", "signal processing", "dsp", "antenna")),
+    ("electrical_engineering", ("electrical engineer", "electrical engineering")),
+    ("electronics_engineering", ("electronics engineer", "electronics engineering", "pcb", "circuit design", "schematic capture")),
+    ("robotics_mechatronics", ("robotics", "robotics engineer", "mechatronics", "mechatronics engineer")),
+    ("manufacturing_engineering", ("manufacturing engineer", "process engineer", "manufacturing engineering", "process engineering", "production engineer")),
+    ("industrial_engineering", ("industrial engineer", "industrial engineering", "lean manufacturing", "six sigma")),
+    ("mechanical_engineering", ("mechanical engineer", "mechanical engineering", "product design", "cad", "solidworks", "autocad", "creo")),
+    ("structural_engineering", ("structural engineer", "structural engineering")),
+    ("civil_engineering", ("civil engineer", "civil engineering", "transportation engineer", "infrastructure engineer")),
+    ("environmental_engineering", ("environmental engineer", "environmental engineering", "water resources")),
+    ("energy_engineering", ("energy systems", "renewable energy", "solar engineer", "wind engineer", "battery engineer")),
+    ("biomedical_engineering", ("biomedical engineer", "biomedical engineering", "medical device")),
+    ("research_engineering", ("research engineer", "r&d engineer", "research scientist")),
+    ("systems_engineering", ("systems engineer", "systems engineering", "systems analyst", "technical program manager")),
+    ("technical_support", ("support engineer", "technical support", "field engineer", "help desk", "desktop support")),
     ("software_engineering", ("software engineer", "software developer", "application developer")),
-    ("backend", ("backend engineer", "back end engineer", "api engineer", "java developer", "python developer")),
+    ("backend", ("backend engineer", "back end engineer", "api engineer", "java developer", "python developer", "technical staff", "typescript")),
 )
+
+CATEGORY_SEARCH_TERMS: dict[str, tuple[str, ...]] = {
+    "electrical_engineering": ("electrical", "electrical engineer", "circuit design"),
+    "power_systems": ("power systems", "relay", "relay design", "substation", "protection relay", "protection and control"),
+    "electronics_engineering": ("electronics", "electronics engineer", "pcb", "circuit design", "schematic"),
+    "telecom_engineering": ("rf", "rf engineer", "communication systems", "signal processing", "antenna"),
+    "controls_automation": ("controls", "controls engineer", "automation", "plc", "scada", "control systems"),
+    "embedded_firmware": ("embedded", "embedded engineer", "firmware", "rtos", "microcontroller"),
+    "hardware_engineering": ("hardware", "hardware engineer", "hardware validation", "fpga", "asic"),
+    "validation_testing": ("validation", "validation engineer", "test engineer", "verification"),
+    "mechanical_engineering": ("mechanical", "mechanical engineer", "cad", "product design", "manufacturing"),
+    "manufacturing_engineering": ("manufacturing", "manufacturing engineer", "process engineer", "lean"),
+    "industrial_engineering": ("industrial engineer", "industrial engineering", "six sigma", "process improvement"),
+    "robotics_mechatronics": ("robotics", "robotics engineer", "mechatronics", "automation"),
+    "civil_engineering": ("civil", "civil engineer", "transportation engineer", "infrastructure"),
+    "structural_engineering": ("structural engineer", "structural engineering", "structures"),
+    "environmental_engineering": ("environmental engineer", "water resources", "environmental"),
+    "energy_engineering": ("energy systems", "renewable energy", "solar", "wind", "battery"),
+    "biomedical_engineering": ("biomedical engineer", "medical device", "biomedical"),
+    "research_engineering": ("research engineer", "r&d engineer", "research"),
+    "systems_engineering": ("systems engineer", "systems analyst", "systems engineering"),
+    "technical_support": ("technical support", "support engineer", "field engineer"),
+}
 
 
 def parse_posted_at(value: Any, now: datetime | None = None) -> tuple[str | None, str | None]:
@@ -387,6 +437,15 @@ def generate_search_terms(
 
     if category == "software_engineering":
         ordered_terms.append("software engineer")
+
+    ordered_terms.extend(CATEGORY_SEARCH_TERMS.get(category, ()))
+
+    if "relay designer" in normalized:
+        ordered_terms.extend(["relay", "relay designer", "protection relay", "protection and control", "substation design"])
+    if "electrical engineer" in normalized:
+        ordered_terms.extend(["electrical", "electrical engineer", "power systems", "relay", "relay design", "circuit design", "substation", "controls"])
+    if "mechanical engineer" in normalized:
+        ordered_terms.extend(["mechanical", "mechanical engineer", "cad", "product design", "manufacturing"])
 
     for label, synonyms in ROLE_SYNONYMS:
         if any(term in normalized or term in title_text for term in synonyms):

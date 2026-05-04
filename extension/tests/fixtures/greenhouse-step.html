@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+  <head><title>Backend Engineer - Greenhouse</title></head>
+  <body>
+    <main id="main">
+      <form id="application-form">
+        <div class="field">
+          <label for="first_name">First Name *</label>
+          <input id="first_name" name="job_application[first_name]" required>
+        </div>
+        <div class="field">
+          <label for="last_name">Last Name *</label>
+          <input id="last_name" name="job_application[last_name]" required>
+        </div>
+        <div class="field">
+          <label for="email">Email *</label>
+          <input id="email" type="email" name="job_application[email]" required>
+        </div>
+        <div class="field">
+          <label for="phone">Phone</label>
+          <input id="phone" type="tel" name="job_application[phone]">
+        </div>
+        <div class="field">
+          <label for="resume">Resume/CV *</label>
+          <input id="resume" type="file" name="job_application[resume]" required style="display:none">
+        </div>
+        <div class="field">
+          <label for="linkedin">LinkedIn Profile</label>
+          <input id="linkedin" name="job_application[answers_attributes][0][text_value]">
+        </div>
+        <div class="field">
+          <label>Are you legally authorized to work in the United States?</label>
+          <input id="work-auth-yes" type="radio" name="job_application[answers_attributes][1][boolean_value]" value="Yes">
+          <label for="work-auth-yes">Yes</label>
+          <input id="work-auth-no" type="radio" name="job_application[answers_attributes][1][boolean_value]" value="No">
+          <label for="work-auth-no">No</label>
+        </div>
+        <button type="button" id="submit_app">Submit Application</button>
+      </form>
+    </main>
+  </body>
+</html>

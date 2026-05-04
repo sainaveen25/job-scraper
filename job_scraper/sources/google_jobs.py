@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from job_scraper.extractors import extract_keywords
+from job_scraper.normalization import generate_search_terms, infer_category, normalize_location, normalize_title
 from job_scraper.source_status import FAILED, OK, PROVIDER_API, PROVIDER_DISABLED, PROVIDER_REQUIRED, SourceScrapeResult, SourceStatus
 from job_scraper.utils import clean_text, fetch_json, infer_country, parse_state
 
@@ -11,28 +12,78 @@ from job_scraper.utils import clean_text, fetch_json, infer_country, parse_state
 logger = logging.getLogger(__name__)
 
 
+def _first_apply_link(item: dict[str, Any]) -> str | None:
+    apply_options = item.get("apply_options") or item.get("apply_links") or []
+    if isinstance(apply_options, list):
+        for option in apply_options:
+            if not isinstance(option, dict):
+                continue
+            link = clean_text(option.get("link") or option.get("apply_link"))
+            if link:
+                return link
+    return None
+
+
+def _detected_extensions(item: dict[str, Any]) -> dict[str, Any]:
+    value = item.get("detected_extensions") or item.get("extensions") or {}
+    return value if isinstance(value, dict) else {}
+
+
 def _normalize_provider_job(item: dict[str, Any], source_url: str, source_name: str) -> dict[str, Any] | None:
     title = clean_text(item.get("title") or item.get("job_title"))
     company = clean_text(item.get("company_name") or item.get("company"))
-    location = clean_text(item.get("location") or item.get("detected_extensions", {}).get("location"))
-    job_url = clean_text(item.get("job_url") or item.get("link") or item.get("apply_link"))
+    extensions = _detected_extensions(item)
+    location = clean_text(item.get("location") or extensions.get("location"))
+    job_url = clean_text(
+        item.get("job_url")
+        or item.get("link")
+        or item.get("apply_link")
+        or item.get("share_link")
+        or item.get("via_link")
+        or _first_apply_link(item)
+    )
     description = clean_text(item.get("description") or item.get("snippet"))
     if not title or not job_url:
         return None
     keywords = extract_keywords(description)
+    location_data = normalize_location(location, work_mode=keywords["work_mode"])
+    normalized_title = normalize_title(title)
+    category = infer_category(title, description, keywords["required_skills"] + keywords["ats_keywords"] + keywords["domain_terms"])
+    search_terms, autocomplete_terms = generate_search_terms(
+        title=title,
+        normalized_title=normalized_title,
+        category=category,
+        required_skills=keywords["required_skills"],
+        ats_keywords=keywords["ats_keywords"],
+    )
+    employment_type = clean_text(
+        item.get("employment_type")
+        or item.get("job_type")
+        or extensions.get("schedule_type")
+        or extensions.get("employment_type")
+    )
+    salary_text = clean_text(item.get("salary") or item.get("salary_text") or extensions.get("salary"))
     return {
         "title": title,
+        "normalized_title": normalized_title,
         "company": company,
-        "location": location,
-        "state": parse_state(location),
-        "country": infer_country(location, title, description),
+        "location": location_data["location"] or location,
+        "city": location_data["city"],
+        "state": location_data["state"] or parse_state(location),
+        "country": location_data["country"] or infer_country(location, title, description),
         "source": source_name,
-        "source_external_id": clean_text(item.get("job_id") or item.get("id")),
+        "source_external_id": clean_text(item.get("job_id") or item.get("id") or item.get("job_id_encoded")),
         "source_url": source_url,
         "job_url": job_url,
         "description": description,
         **keywords,
-        "posted_at": clean_text(item.get("posted_at") or item.get("detected_extensions", {}).get("posted_at")),
+        "work_mode": location_data["work_mode"] or keywords["work_mode"],
+        "employment_type": employment_type or keywords["employment_type"],
+        "salary_text": salary_text or keywords["salary_text"],
+        "posted_at": clean_text(item.get("posted_at") or extensions.get("posted_at")),
+        "category": category,
+        "search_terms": search_terms,
+        "autocomplete_terms": autocomplete_terms,
         "raw_payload": item,
     }
 
@@ -81,13 +132,13 @@ def scrape_google_jobs_provider(
                     logger.info("GOOGLE_JOBS_PROVIDER=serpapi but SERPAPI_API_KEY is missing.")
                     return []
                 raw_jobs = _serpapi_jobs(query_text, serpapi_api_key, timeout)
-                source_name = "google_jobs_serpapi"
+                source_name = "google_jobs_provider"
             elif provider == "scraperapi":
                 if not scraperapi_api_key:
                     logger.info("GOOGLE_JOBS_PROVIDER=scraperapi but SCRAPERAPI_API_KEY is missing.")
                     return []
                 raw_jobs = _scraperapi_jobs(query_text, scraperapi_api_key, timeout)
-                source_name = "google_jobs_scraperapi"
+                source_name = "google_jobs_provider"
             else:
                 logger.info("Unknown GOOGLE_JOBS_PROVIDER=%s; skipping.", provider)
                 return []

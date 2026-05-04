@@ -199,6 +199,53 @@ def test_workday_analyst_terms():
     assert "workday consultant" in terms
 
 
+def test_electrical_engineer_terms():
+    terms, autocomplete = generate_search_terms(
+        title="Electrical Engineer",
+        normalized_title="electrical engineer",
+        category="electrical_engineering",
+        required_skills=["Power Systems", "Relay Protection"],
+        ats_keywords=[],
+    )
+    assert "electrical" in terms
+    assert "electrical engineer" in terms
+    assert "power systems" in terms
+    assert "relay" in terms
+    assert "relay design" in terms
+    assert "circuit design" in terms
+    assert "electrical engineer" in autocomplete
+
+
+def test_relay_designer_terms():
+    terms, _ = generate_search_terms(
+        title="Relay Designer",
+        normalized_title="relay designer",
+        category="power_systems",
+        required_skills=[],
+        ats_keywords=[],
+    )
+    assert "relay" in terms
+    assert "relay designer" in terms
+    assert "protection relay" in terms
+    assert "protection and control" in terms
+    assert "substation design" in terms
+
+
+def test_mechanical_engineer_terms():
+    terms, _ = generate_search_terms(
+        title="Mechanical Engineer",
+        normalized_title="mechanical engineer",
+        category="mechanical_engineering",
+        required_skills=["CAD"],
+        ats_keywords=[],
+    )
+    assert "mechanical" in terms
+    assert "mechanical engineer" in terms
+    assert "cad" in terms
+    assert "product design" in terms
+    assert "manufacturing" in terms
+
+
 # ---------------------------------------------------------------------------
 # Deduplication in output
 # ---------------------------------------------------------------------------

@@ -16,11 +16,13 @@ from automation.models import (
     FillResult,
     JobContext,
     ResumeArtifact,
+    RunLog,
     RunHistory,
     RunStatus,
     UserProfile,
 )
 from automation.platforms import PLATFORM_ADAPTERS
+from automation.progress import build_page_progress, progress_to_dict
 from automation.validators import can_submit
 
 
@@ -68,12 +70,28 @@ class ApplyAutomationService:
             await page.goto(job_context.url, wait_until="domcontentloaded")
             fields = await adapter.scan_fields(page)
             known, unknown = map_fields(fields, user_profile, self.memory_store.load())
+            validation = await adapter.validate(page, fields, known)
+            current_url = getattr(page, "url", None)
+            try:
+                page_title = await page.title()
+            except Exception:
+                page_title = None
+            has_next = await adapter.detect_next_button(page)
+            has_submit = await adapter.detect_submit_button(page)
             shot = await screenshot(page, self.settings.artifact_dir, run_id, "prepare")
 
         history.detected_fields = fields
         history.unmapped_fields = unknown
         if shot:
             history.screenshots.append(shot)
+        history.logs.append(
+            RunLog(
+                event="prepare_complete",
+                message="Prepared assisted application run.",
+                step=1,
+                details={"fields_detected": len(fields), "unresolved_fields": len(unknown)},
+            )
+        )
         self._runs[run_id] = {
             "job": job_context,
             "resume": resume_artifact,
@@ -82,7 +100,24 @@ class ApplyAutomationService:
             "mode": selected_mode,
             "history": history,
         }
-        return _response(True, adapter.name, run_id, known, unknown, history)
+        progress = build_page_progress(
+            platform=adapter.name,
+            step=1,
+            fields=fields,
+            known=known,
+            unknown=unknown,
+            validation=validation,
+            has_next=has_next,
+            has_submit=has_submit,
+            current_url=current_url,
+            page_title=page_title,
+            screenshot_path=shot,
+            logs=history.logs,
+        )
+        result = FillResult(ok=True, known_fields=known, unknown_fields=unknown, validation=validation, progress=progress)
+        if shot:
+            result.screenshots.append(shot)
+        return _response(True, adapter.name, run_id, known, unknown, history, result)
 
     async def run_async(
         self,
@@ -117,34 +152,121 @@ class ApplyAutomationService:
                         record["job"],
                         record["resume"],
                     )
+                    history.detected_fields = result.progress.fields_found if result.progress else []
                     if selected_mode == AutomationMode.SUBMIT:
                         validation = result.validation or await adapter.validate(page)
                         result.validation = validation
-                        if can_submit(selected_mode.value, allow_submit, validation):
+                        ready_for_submit = bool(result.progress and result.progress.ready_for_submit)
+                        if can_submit(selected_mode.value, allow_submit, validation) and ready_for_submit:
                             result.submit = await adapter.submit(page)
                             history.status = RunStatus.SUBMITTED if result.submit.submitted else RunStatus.NEEDS_REVIEW
                         else:
-                            history.status = RunStatus.NEEDS_REVIEW
+                            history.status = RunStatus.READY_FOR_SUBMIT if validation.ok and ready_for_submit else RunStatus.NEEDS_REVIEW
+                            result.logs.append(
+                                RunLog(
+                                    event="submit_blocked",
+                                    message="Submit requires explicit confirmation and a ready final page.",
+                                    level="warning",
+                                    step=result.progress.step if result.progress else None,
+                                    details={"allow_submit": allow_submit, "ready_for_submit": ready_for_submit},
+                                )
+                            )
                     else:
-                        history.status = RunStatus.FILLED_WAITING_REVIEW
+                        if result.progress and result.progress.ready_for_next:
+                            history.status = RunStatus.READY_FOR_NEXT
+                        elif result.progress and result.progress.ready_for_submit:
+                            history.status = RunStatus.READY_FOR_SUBMIT
+                        else:
+                            history.status = RunStatus.FILLED_WAITING_REVIEW
                 shot = await screenshot(page, self.settings.artifact_dir, run_id, "run")
                 if shot:
                     history.screenshots.append(shot)
                     result.screenshots.append(shot)
+                    if result.progress:
+                        result.progress.screenshot_path = shot
+                        result.progress.screenshots.append(shot)
         except Exception as exc:
             history.status = RunStatus.FAILED
             history.errors.append(str(exc))
             return {"ok": False, "runId": run_id, "status": history.status.value, "error": str(exc)}
 
         history.unmapped_fields = result.unknown_fields
+        history.logs.extend(result.logs)
+        if result.progress and result.progress.logs is not result.logs:
+            history.logs.extend(result.progress.logs)
         history.updated_at = datetime.now(timezone.utc).isoformat()
         return _response(result.ok, adapter.name, run_id, result.known_fields, result.unknown_fields, history, result)
+
+    async def continue_async(self, *, run_id: str) -> dict[str, Any]:
+        record = self._runs.get(run_id)
+        if not record:
+            return {"ok": False, "runId": run_id, "error": "Unknown run id."}
+
+        adapter = self.detect_platform(record["job"].url or "")
+        history: RunHistory = record["history"]
+        result = FillResult(ok=False)
+        try:
+            async with BrowserSession(self.settings).open() as (page, _context):
+                await page.goto(record["job"].url, wait_until="domcontentloaded")
+                result = await adapter.fill_fields(
+                    page,
+                    record["profile"],
+                    self.memory_store.load(),
+                    record["job"],
+                    record["resume"],
+                )
+                if result.progress and result.progress.ready_for_next:
+                    moved = await adapter.continue_to_next(page)
+                    result.logs.append(
+                        RunLog(
+                            event="continue_clicked" if moved else "continue_not_clicked",
+                            message="Clicked next/continue control." if moved else "No next/continue control clicked.",
+                            level="info" if moved else "warning",
+                            step=result.progress.step,
+                        )
+                    )
+                    if moved:
+                        record["job"].metadata["step"] = int(record["job"].metadata.get("step", 1)) + 1
+                        history.status = RunStatus.ASSISTED_READY
+                    else:
+                        history.status = RunStatus.NEEDS_REVIEW
+                elif result.progress and result.progress.ready_for_submit:
+                    history.status = RunStatus.READY_FOR_SUBMIT
+                else:
+                    history.status = RunStatus.NEEDS_REVIEW
+                shot = await screenshot(page, self.settings.artifact_dir, run_id, f"continue-{record['job'].metadata.get('step', 1)}")
+                if shot:
+                    history.screenshots.append(shot)
+                    result.screenshots.append(shot)
+                    if result.progress:
+                        result.progress.screenshot_path = shot
+                        result.progress.screenshots.append(shot)
+        except Exception as exc:
+            history.status = RunStatus.FAILED
+            history.errors.append(str(exc))
+            return {"ok": False, "runId": run_id, "status": history.status.value, "error": str(exc)}
+
+        history.unmapped_fields = result.unknown_fields
+        history.logs.extend(result.logs)
+        if result.progress and result.progress.logs is not result.logs:
+            history.logs.extend(result.progress.logs)
+        history.updated_at = datetime.now(timezone.utc).isoformat()
+        return _response(result.ok, adapter.name, run_id, result.known_fields, result.unknown_fields, history, result)
+
+    async def submit_async(self, *, run_id: str, confirm: bool = False) -> dict[str, Any]:
+        return await self.run_async(run_id=run_id, mode=AutomationMode.SUBMIT, allow_submit=confirm)
 
     def prepare(self, **kwargs: Any) -> dict[str, Any]:
         return asyncio.run(self.prepare_async(**kwargs))
 
     def run(self, **kwargs: Any) -> dict[str, Any]:
         return asyncio.run(self.run_async(**kwargs))
+
+    def continue_run(self, **kwargs: Any) -> dict[str, Any]:
+        return asyncio.run(self.continue_async(**kwargs))
+
+    def submit(self, **kwargs: Any) -> dict[str, Any]:
+        return asyncio.run(self.submit_async(**kwargs))
 
     def save_field_memory(self, payload: dict[str, Any]) -> dict[str, Any]:
         original = payload.get("originalQuestion") or payload.get("original_question") or ""
@@ -182,6 +304,14 @@ def run_application(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def continue_application(payload: dict[str, Any]) -> dict[str, Any]:
+    return _DEFAULT_SERVICE.continue_run(run_id=payload["runId"])
+
+
+def submit_application(payload: dict[str, Any]) -> dict[str, Any]:
+    return _DEFAULT_SERVICE.submit(run_id=payload["runId"], confirm=bool(payload.get("confirm") or payload.get("allowSubmit")))
+
+
 def save_field_memory(payload: dict[str, Any]) -> dict[str, Any]:
     return _DEFAULT_SERVICE.save_field_memory(payload)
 
@@ -213,13 +343,31 @@ def _response(
     history: RunHistory,
     result: FillResult | None = None,
 ) -> dict[str, Any]:
+    step = result.progress.step if result and result.progress else 1
+    detected_fields = result.progress.fields_found if result and result.progress else history.detected_fields
+    progress_payload = progress_to_dict(result.progress) if result else None
     return {
         "ok": ok,
         "platform": platform,
+        "step": step,
+        "current_url": progress_payload.get("current_url") if progress_payload else None,
+        "page_title": progress_payload.get("page_title") if progress_payload else None,
+        "screenshot_path": progress_payload.get("screenshot_path") if progress_payload else None,
+        "fieldsDetected": [asdict(field) for field in detected_fields],
+        "fieldsFilled": [asdict(item) for item in known],
+        "unresolvedFields": [asdict(item) for item in unknown],
+        "fields_detected": [asdict(field) for field in detected_fields],
+        "fields_filled": [asdict(item) for item in known],
+        "unresolved_fields": [asdict(item) for item in unknown],
+        "progress": progress_payload,
+        "screenshots": result.screenshots if result else history.screenshots,
+        "logs": [asdict(item) for item in (result.logs if result else history.logs)],
         "readiness": {
             "knownFieldCount": len(known),
             "unknownFieldCount": len(unknown),
             "uploadedResume": bool(result.uploaded_resume) if result else False,
+            "readyForNext": bool(result and result.progress and result.progress.ready_for_next),
+            "readyForSubmit": bool(result and result.progress and result.progress.ready_for_submit),
             "canSubmit": bool(result and result.validation and result.validation.ok),
         },
         "knownFields": [asdict(item) for item in known],

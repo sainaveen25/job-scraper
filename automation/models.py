@@ -17,6 +17,8 @@ class RunStatus(str, Enum):
     PREVIEW_READY = "preview_ready"
     ASSISTED_READY = "assisted_ready"
     FILLED_WAITING_REVIEW = "filled_waiting_review"
+    READY_FOR_NEXT = "ready_for_next"
+    READY_FOR_SUBMIT = "ready_for_submit"
     SUBMITTED = "submitted"
     NEEDS_REVIEW = "needs_review"
     FAILED = "failed"
@@ -126,6 +128,16 @@ class UnknownField:
 
 
 @dataclass
+class RunLog:
+    event: str
+    message: str
+    level: str = "info"
+    step: int | None = None
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class FieldMemoryEntry:
     original_question: str
     normalized_question: str
@@ -154,6 +166,23 @@ class SubmitResult:
 
 
 @dataclass
+class PageProgress:
+    page_detected: str
+    step: int = 1
+    current_url: str | None = None
+    page_title: str | None = None
+    screenshot_path: str | None = None
+    fields_found: list[Field] = field(default_factory=list)
+    fields_autofilled: list[MappedField] = field(default_factory=list)
+    unresolved_fields: list[UnknownField] = field(default_factory=list)
+    required_missing: list[Field] = field(default_factory=list)
+    ready_for_next: bool = False
+    ready_for_submit: bool = False
+    screenshots: list[str] = field(default_factory=list)
+    logs: list[RunLog] = field(default_factory=list)
+
+
+@dataclass
 class FillResult:
     ok: bool
     known_fields: list[MappedField] = field(default_factory=list)
@@ -161,8 +190,9 @@ class FillResult:
     uploaded_resume: bool = False
     validation: ValidationResult | None = None
     submit: SubmitResult | None = None
+    progress: PageProgress | None = None
     screenshots: list[str] = field(default_factory=list)
-    logs: list[str] = field(default_factory=list)
+    logs: list[RunLog] = field(default_factory=list)
 
 
 @dataclass
@@ -176,9 +206,62 @@ class RunHistory:
     detected_fields: list[Field] = field(default_factory=list)
     unmapped_fields: list[UnknownField] = field(default_factory=list)
     screenshots: list[str] = field(default_factory=list)
+    logs: list[RunLog] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class ApplySession:
+    session_id: str
+    user_id: str
+    job: dict[str, Any]
+    resume: dict[str, Any] | None = None
+    profile: dict[str, Any] = field(default_factory=dict)
+    field_memory: list[FieldMemoryEntry] = field(default_factory=list)
+    platform: str = "generic"
+    status: str = "created"
+    progress: dict[str, Any] = field(default_factory=dict)
+    unresolved_fields: list[UnknownField] = field(default_factory=list)
+    run_history: list[RunLog] = field(default_factory=list)
+    current_url: str | None = None
+    page_title: str | None = None
+    screenshot_path: str | None = None
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def touch(self) -> None:
+        self.updated_at = datetime.now(timezone.utc).isoformat()
+
+    def to_client_payload(self, *, extension_token: str | None = None, client: str = "web") -> dict[str, Any]:
+        payload = {
+            "sessionId": self.session_id,
+            "job": self.job,
+            "resume": self.resume,
+            "profile": self.profile,
+            "fieldMemory": [asdict(entry) for entry in self.field_memory],
+            "platform": self.platform,
+            "status": self.status,
+            "progress": self.progress,
+            "unresolvedFields": [asdict(item) for item in self.unresolved_fields],
+            "runHistory": [asdict(item) for item in self.run_history],
+            "pageTitle": self.page_title,
+            "currentUrl": self.current_url,
+            "screenshotPath": self.screenshot_path,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+            "client": client,
+            "extensionOptional": True,
+            "manualAssistAvailable": True,
+            "submitRequiresExplicitConfirmation": True,
+        }
+        if extension_token:
+            payload["extensionToken"] = extension_token
+        return payload
+
+    def to_extension_payload(self, *, extension_token: str | None = None) -> dict[str, Any]:
+        return self.to_client_payload(extension_token=extension_token, client="extension")

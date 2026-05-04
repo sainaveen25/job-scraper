@@ -113,7 +113,7 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["scrapling*", "automation*"]
+include = ["scrapling*", "automation*", "job_scraper*", "scraper*"]
 
 [tool.mypy]
 python_version = "3.10"
