@@ -63,6 +63,7 @@ classifiers = [
 dependencies = [
     "lxml>=6.0.3",
     "cssselect>=1.4.0",
+    "curl_cffi>=0.15.0",
     "orjson>=3.11.8",
     "requests>=2.32.0",
     "tld>=0.13.2",
@@ -73,7 +74,6 @@ dependencies = [
 [project.optional-dependencies]
 fetchers = [
     "click>=8.3.0",
-    "curl_cffi>=0.15.0",
     "playwright==1.58.0",
     "patchright==1.58.2",
     "browserforge>=1.2.4",

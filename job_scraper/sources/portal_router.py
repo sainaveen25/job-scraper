@@ -260,6 +260,10 @@ def route_and_scrape_source_with_status(
         else:
             jobs = scrape_generic_jobs(source_url, timeout=timeout)
     except Exception as exc:
+        if source_type == "remoteok" and _is_blocked_http_error(exc):
+            message = "RemoteOK JSON endpoint returned 403; treating source as blocked for this run."
+            logger.info("%s URL=%s", message, source_url)
+            return _result(source_type, source_url, DIRECT_HTTP, BLOCKED_403, [], message)
         if source_type in PROVIDER_REQUIRED_SOURCES and _is_blocked_http_error(exc):
             if source_type == "indeed":
                 message = "Indeed direct scraping blocked; provider/API path required for reliable production use."

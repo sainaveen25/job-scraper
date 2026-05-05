@@ -1,5 +1,6 @@
 -e .
 requests>=2.32.0
+curl_cffi>=0.15.0
 python-dotenv>=1.0.1
 defusedxml>=0.7.1
 lxml>=6.0.3

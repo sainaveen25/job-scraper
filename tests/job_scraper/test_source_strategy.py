@@ -107,6 +107,38 @@ def test_linkedin_best_effort_ok_when_direct_results_exist(monkeypatch):
     assert result.jobs[0]["title"] == "Electrical Engineer"
 
 
+def test_remoteok_403_is_blocked_not_failed(monkeypatch):
+    def blocked(*args, **kwargs):
+        raise _http_403()
+
+    monkeypatch.setattr("job_scraper.sources.portal_router.scrape_remoteok_jobs", blocked)
+
+    result = route_and_scrape_source_with_status(
+        "https://remoteok.com/remote-dev-jobs",
+        settings=_settings(),
+    )
+
+    assert result.jobs == []
+    assert result.status.mode == "direct_http"
+    assert result.status.status == BLOCKED_403
+    assert "RemoteOK JSON endpoint returned 403" in result.status.message
+
+
+def test_himalayas_browser_disabled_rejection_is_zero_results(monkeypatch):
+    monkeypatch.setattr("job_scraper.sources.himalayas.fetch_html", lambda *args, **kwargs: (_ for _ in ()).throw(_http_403()))
+    monkeypatch.setattr("job_scraper.sources.himalayas.maybe_fetch_with_browser", lambda *args, **kwargs: None)
+
+    result = route_and_scrape_source_with_status(
+        "https://himalayas.app/jobs/developer",
+        enable_browser_fetcher=False,
+        settings=_settings(),
+    )
+
+    assert result.jobs == []
+    assert result.status.mode == "direct_http"
+    assert result.status.status == "zero_results"
+
+
 def test_workday_without_browser_reports_browser_required(monkeypatch):
     monkeypatch.setattr("job_scraper.sources.portal_router.scrape_workday_jobs", lambda *args, **kwargs: [])
 
