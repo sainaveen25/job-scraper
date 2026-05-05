@@ -41,7 +41,8 @@ Optional:
 - `SCRAPERAPI_API_KEY=...`
 - `GOOGLE_JOBS_MAX_QUERIES_PER_RUN=25`
 - `GOOGLE_JOBS_MAX_RESULTS_PER_QUERY=20`
-- `ENABLE_BROWSER_FETCHER=true` for optional Workday browser fallback
+- `ENABLE_BROWSER_FETCHER=true` only when Playwright dependencies and Chromium are installed
+- `BROWSER_FETCHER_TIMEOUT_SECONDS=30`
 
 ## Local commands
 
@@ -81,7 +82,7 @@ Use a Background Worker service, not a static site.
 Build command:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt && python -m playwright install --with-deps chromium
 ```
 
 Start command:
@@ -101,6 +102,15 @@ Set environment variables:
 - `GLOBAL_JOB_CATEGORIES=...`
 - `GLOBAL_JOB_LOCATIONS=...`
 - `GOOGLE_JOBS_PROVIDER=disabled`
+- `ENABLE_BROWSER_FETCHER=true` after the build command above succeeds
+- `BROWSER_FETCHER_TIMEOUT_SECONDS=30`
+
+If the Playwright browser install fails or the service is not using the build command above,
+leave `ENABLE_BROWSER_FETCHER=false`. Workday board URLs will be reported as browser-required
+instead of failing the whole scrape, and Himalayas will skip its browser fallback quietly.
+
+If deploying with Docker on Render, use `Dockerfile.render-cron`; it installs the same Python
+fetcher dependencies and Chromium browser runtime during image build.
 
 ## Railway
 
@@ -130,6 +140,7 @@ Install dependencies:
 
 ```bash
 pip install -r requirements.txt
+python -m playwright install --with-deps chromium
 ```
 
 Run under `systemd`, `supervisord`, or `tmux`:

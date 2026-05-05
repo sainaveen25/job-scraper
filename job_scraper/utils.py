@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
@@ -15,6 +16,7 @@ from job_scraper.normalization import normalize_country, normalize_location, nor
 
 
 logger = logging.getLogger(__name__)
+_BROWSER_UNAVAILABLE_LOGGED = False
 REQUEST_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -55,16 +57,60 @@ def fetch_json(url: str, timeout: int = 30, params: dict[str, Any] | None = None
     return response.json()
 
 
+def browser_fetcher_available() -> tuple[bool, str | None]:
+    try:
+        from playwright.sync_api import sync_playwright
+        from scrapling.fetchers import DynamicFetcher
+    except ModuleNotFoundError as exc:
+        missing_name = exc.name or str(exc)
+        return False, f"missing Python dependency: {missing_name}"
+    except Exception as exc:  # pragma: no cover
+        return False, f"browser fetcher import failed: {exc}"
+
+    if DynamicFetcher is None:  # pragma: no cover
+        return False, "dynamic browser fetcher is unavailable"
+
+    playwright = None
+    try:
+        playwright = sync_playwright().start()
+        chromium_path = playwright.chromium.executable_path
+        if not chromium_path or not os.path.exists(chromium_path):
+            return False, "Chromium browser binary is not installed; run python -m playwright install chromium"
+    except Exception as exc:  # pragma: no cover
+        return False, f"Playwright runtime check failed: {exc}"
+    finally:
+        if playwright is not None:
+            try:
+                playwright.stop()
+            except Exception:
+                pass
+
+    return True, None
+
+
 def maybe_fetch_with_browser(url: str, enabled: bool = False, timeout: int = 30000) -> str | None:
+    global _BROWSER_UNAVAILABLE_LOGGED
+
     if not enabled:
+        return None
+    available, reason = browser_fetcher_available()
+    if not available:
+        if not _BROWSER_UNAVAILABLE_LOGGED:
+            logger.info("Browser fetcher disabled for this run: %s", reason)
+            _BROWSER_UNAVAILABLE_LOGGED = True
         return None
     try:
         from scrapling.fetchers import DynamicFetcher
 
         response = DynamicFetcher.fetch(url, timeout=timeout, network_idle=True, headless=True)
         return response.html_content
+    except ModuleNotFoundError as exc:  # pragma: no cover
+        if not _BROWSER_UNAVAILABLE_LOGGED:
+            logger.info("Browser fetcher disabled for this run: missing Python dependency: %s", exc.name or exc)
+            _BROWSER_UNAVAILABLE_LOGGED = True
+        return None
     except Exception as exc:  # pragma: no cover
-        logger.warning("Browser fetch failed for %s: %s", url, exc)
+        logger.info("Browser fetch failed for %s: %s", url, exc)
         return None
 
 

@@ -5,6 +5,8 @@ import logging
 import re
 from urllib.parse import urlparse
 
+import requests
+
 from job_scraper.extractors import extract_keywords
 from job_scraper.normalization import (
     choose_posted_at,
@@ -14,6 +16,7 @@ from job_scraper.normalization import (
     normalize_title,
 )
 from job_scraper.utils import (
+    REQUEST_HEADERS,
     absolute_url,
     clean_text,
     fetch_html,
@@ -27,6 +30,10 @@ from job_scraper.utils import (
 
 logger = logging.getLogger(__name__)
 JSON_SCRIPT_RE = re.compile(r"<script[^>]*application/ld\+json[^>]*>(.*?)</script>", re.IGNORECASE | re.DOTALL)
+WORKDAY_CONFIG_RE = {
+    "tenant": re.compile(r'\btenant:\s*"([^"]+)"'),
+    "site_id": re.compile(r'\bsiteId:\s*"([^"]+)"'),
+}
 REQ_ID_RE = re.compile(r"(?:Requisition|Req(?:uisition)? ID)\s*[:#]?\s*([A-Z0-9-]+)", re.IGNORECASE)
 POSTED_RE = re.compile(
     r"(?:Posted|Date Posted|Posted Date|Posted On|Date)\s*[:#]?\s*"
@@ -78,6 +85,136 @@ def _add_search_metadata(job: dict) -> dict:
     job["search_terms"] = search_terms
     job["autocomplete_terms"] = autocomplete_terms
     return job
+
+
+def _workday_board_prefix(source_url: str) -> str:
+    parsed = urlparse(source_url)
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if len(path_parts) >= 2 and re.fullmatch(r"[a-z]{2}-[A-Z]{2}", path_parts[0]):
+        return "/" + "/".join(path_parts[:2])
+    if path_parts:
+        return "/" + path_parts[0]
+    return ""
+
+
+def _extract_workday_config(html: str, source_url: str) -> tuple[str, str] | None:
+    values: dict[str, str] = {}
+    for key, pattern in WORKDAY_CONFIG_RE.items():
+        match = pattern.search(html)
+        if match:
+            values[key] = match.group(1)
+
+    if values.get("tenant") and values.get("site_id"):
+        return values["tenant"], values["site_id"]
+
+    path_parts = [part for part in urlparse(source_url).path.split("/") if part]
+    if path_parts:
+        site_id = path_parts[-1]
+        tenant = urlparse(source_url).netloc.split(".", 1)[0]
+        if tenant and site_id:
+            return tenant, site_id
+    return None
+
+
+def _workday_public_job_url(source_url: str, external_path: str | None, external_url: str | None = None) -> str:
+    if external_url:
+        return external_url
+    parsed = urlparse(source_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    prefix = _workday_board_prefix(source_url)
+    return f"{origin}{prefix}{external_path or ''}"
+
+
+def _description_from_html(description_html: str | None) -> str | None:
+    if not description_html:
+        return None
+    selector = make_selector(f"<body>{description_html}</body>", "")
+    return first_text(selector, "body")
+
+
+def _fetch_workday_detail(api_base: str, posting: dict, source_url: str, timeout: int) -> dict:
+    external_path = clean_text(posting.get("externalPath"))
+    if not external_path:
+        return {}
+    detail_url = f"{api_base}{external_path}"
+    response = requests.get(detail_url, headers=REQUEST_HEADERS, timeout=timeout)
+    response.raise_for_status()
+    payload = response.json()
+    detail = payload.get("jobPostingInfo")
+    return detail if isinstance(detail, dict) else {}
+
+
+def _job_from_workday_api_posting(posting: dict, detail: dict, source_url: str) -> dict | None:
+    title = clean_text(detail.get("title") or posting.get("title"))
+    external_path = clean_text(posting.get("externalPath"))
+    if not title or not external_path:
+        return None
+
+    description = _description_from_html(clean_text(detail.get("jobDescription")))
+    fallback_text = clean_text(" ".join(str(item) for item in posting.get("bulletFields") or []))
+    description = description or fallback_text or title
+    location = clean_text(detail.get("location") or posting.get("locationsText"))
+    keywords = extract_keywords(description)
+    location_data = normalize_location(
+        location,
+        work_mode=clean_text(detail.get("remoteType") or posting.get("remoteType")) or keywords["work_mode"],
+    )
+    posted_at = clean_text(detail.get("startDate") or detail.get("postedOn") or posting.get("postedOn"))
+    req_id = clean_text(detail.get("jobReqId") or next(iter(posting.get("bulletFields") or []), None))
+
+    return _add_search_metadata({
+        "title": title,
+        "company": None,
+        "location": location_data["location"],
+        "city": location_data["city"],
+        "state": location_data["state"] or parse_state(location),
+        "country": location_data["country"] or infer_country(clean_text(detail.get("country")), location, title, description),
+        "source": "workday",
+        "source_external_id": req_id,
+        "source_url": source_url,
+        "job_url": _workday_public_job_url(source_url, external_path, clean_text(detail.get("externalUrl"))),
+        "description": description,
+        **keywords,
+        "work_mode": location_data["work_mode"] or clean_text(detail.get("remoteType") or posting.get("remoteType")) or keywords["work_mode"],
+        "employment_type": clean_text(detail.get("timeType")) or keywords["employment_type"],
+        "posted_at": choose_posted_at(posted_at)["posted_at"] if posted_at else None,
+        "raw_payload": {"listing": posting, "detail": detail},
+    })
+
+
+def _extract_workday_api_jobs(html: str, source_url: str, timeout: int) -> list[dict]:
+    config = _extract_workday_config(html, source_url)
+    if not config:
+        return []
+    tenant, site_id = config
+    parsed = urlparse(source_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    api_base = f"{origin}/wday/cxs/{tenant}/{site_id}"
+    response = requests.post(
+        f"{api_base}/jobs",
+        json={"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": ""},
+        headers={**REQUEST_HEADERS, "Content-Type": "application/json"},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    postings = payload.get("jobPostings") if isinstance(payload, dict) else None
+    if not isinstance(postings, list):
+        return []
+
+    jobs: list[dict] = []
+    for posting in postings[:20]:
+        if not isinstance(posting, dict):
+            continue
+        detail: dict = {}
+        try:
+            detail = _fetch_workday_detail(api_base, posting, source_url, timeout)
+        except Exception as exc:
+            logger.info("Failed to fetch Workday CXS detail for %s: %s", posting.get("externalPath"), exc)
+        job = _job_from_workday_api_posting(posting, detail, source_url)
+        if job:
+            jobs.append(job)
+    return jobs
 
 
 def _job_location_address(entry: dict) -> dict:
@@ -237,7 +374,19 @@ def scrape_workday_jobs(
     enable_browser_fetcher: bool = False,
     browser_timeout_seconds: int = 30,
 ) -> list[dict]:
-    html = fetch_html(source_url, timeout=timeout)
+    try:
+        html = fetch_html(source_url, timeout=timeout)
+    except Exception as exc:
+        logger.info("Workday shell page fetch failed for %s; trying CXS API: %s", source_url, exc)
+        html = ""
+
+    try:
+        jobs = _extract_workday_api_jobs(html, source_url, timeout=timeout)
+        if jobs:
+            return jobs
+    except Exception as exc:
+        logger.info("Workday CXS API extraction failed for %s: %s", source_url, exc)
+
     jobs = _extract_jobs_from_ld_json(html, source_url)
     if jobs:
         return jobs

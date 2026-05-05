@@ -7,7 +7,8 @@ from job_scraper.source_status import BLOCKED_403, BROWSER_REQUIRED, PROVIDER_DI
 from job_scraper.query_builder import build_global_queries
 from job_scraper.sources.google_jobs import scrape_google_jobs_provider, scrape_google_jobs_provider_with_status
 from job_scraper.sources.portal_router import route_and_scrape_source_with_status, source_mode_for_type
-from job_scraper.sources.workday import is_workday_board_url
+from job_scraper.sources.workday import is_workday_board_url, scrape_workday_jobs
+from job_scraper.utils import maybe_fetch_with_browser
 
 
 def _settings(**overrides) -> JobScraperSettings:
@@ -139,6 +140,16 @@ def test_himalayas_browser_disabled_rejection_is_zero_results(monkeypatch):
     assert result.status.status == "zero_results"
 
 
+def test_browser_fetcher_unavailable_degrades_without_exception(monkeypatch, caplog):
+    monkeypatch.setattr("job_scraper.utils.browser_fetcher_available", lambda: (False, "missing Python dependency: playwright"))
+
+    with caplog.at_level("INFO"):
+        html = maybe_fetch_with_browser("https://example.com/jobs", enabled=True)
+
+    assert html is None
+    assert "Browser fetcher disabled for this run: missing Python dependency: playwright" in caplog.text
+
+
 def test_workday_without_browser_reports_browser_required(monkeypatch):
     monkeypatch.setattr("job_scraper.sources.portal_router.scrape_workday_jobs", lambda *args, **kwargs: [])
 
@@ -180,6 +191,7 @@ def test_workday_browser_enabled_extracts_listing_fallback(monkeypatch):
     </body></html>
     """
     monkeypatch.setattr("job_scraper.sources.workday.fetch_html", lambda *args, **kwargs: "<html></html>")
+    monkeypatch.setattr("job_scraper.sources.workday.requests.post", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("skip CXS")))
     monkeypatch.setattr("job_scraper.sources.workday.maybe_fetch_with_browser", lambda *args, **kwargs: html)
 
     result = route_and_scrape_source_with_status(
@@ -197,6 +209,71 @@ def test_workday_browser_enabled_extracts_listing_fallback(monkeypatch):
     assert result.jobs[0]["salary_text"]
     assert result.jobs[0]["category"] == "controls_automation"
     assert "controls engineer" in result.jobs[0]["autocomplete_terms"]
+
+
+def test_workday_cxs_api_extracts_jobs_before_browser(monkeypatch):
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    html = """
+    <script>
+      window.workday = {
+        tenant: "workday",
+        siteId: "Workday"
+      };
+    </script>
+    """
+
+    def fake_post(url, **kwargs):
+        assert url == "https://workday.wd5.myworkdayjobs.com/wday/cxs/workday/Workday/jobs"
+        assert kwargs["json"]["limit"] == 20
+        return FakeResponse({
+            "jobPostings": [
+                {
+                    "title": "Senior Machine Learning Engineer",
+                    "externalPath": "/job/Canada-ON-Toronto/Senior-Machine-Learning-Engineer_JR-0106107",
+                    "locationsText": "Toronto, ON, Canada",
+                    "postedOn": "Posted Today",
+                    "remoteType": "Flex",
+                    "bulletFields": ["JR-0106107"],
+                }
+            ]
+        })
+
+    def fake_get(url, **kwargs):
+        assert url.endswith("/job/Canada-ON-Toronto/Senior-Machine-Learning-Engineer_JR-0106107")
+        return FakeResponse({
+            "jobPostingInfo": {
+                "title": "Senior Machine Learning Engineer",
+                "jobDescription": "<p>Build machine learning services with Python.</p>",
+                "location": "Toronto, ON, Canada",
+                "startDate": "2026-05-05",
+                "timeType": "Full Time",
+                "jobReqId": "JR-0106107",
+                "remoteType": "Flex",
+                "externalUrl": "https://workday.wd5.myworkdayjobs.com/Workday/job/Canada-ON-Toronto/Senior-Machine-Learning-Engineer_JR-0106107",
+            }
+        })
+
+    monkeypatch.setattr("job_scraper.sources.workday.fetch_html", lambda *args, **kwargs: html)
+    monkeypatch.setattr("job_scraper.sources.workday.requests.post", fake_post)
+    monkeypatch.setattr("job_scraper.sources.workday.requests.get", fake_get)
+    monkeypatch.setattr("job_scraper.sources.workday.maybe_fetch_with_browser", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("browser should not be needed")))
+
+    jobs = scrape_workday_jobs("https://workday.wd5.myworkdayjobs.com/en-US/Workday", enable_browser_fetcher=True)
+
+    assert len(jobs) == 1
+    assert jobs[0]["title"] == "Senior Machine Learning Engineer"
+    assert jobs[0]["source_external_id"] == "JR-0106107"
+    assert jobs[0]["city"] == "Toronto"
+    assert jobs[0]["country"] == "Canada"
 
 
 def test_google_jobs_disabled_is_provider_disabled():
