@@ -64,6 +64,7 @@ dependencies = [
     "lxml>=6.0.3",
     "cssselect>=1.4.0",
     "orjson>=3.11.8",
+    "requests>=2.32.0",
     "tld>=0.13.2",
     "w3lib>=2.4.1",
     "typing_extensions"
