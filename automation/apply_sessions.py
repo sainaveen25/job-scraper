@@ -90,29 +90,36 @@ class ApplySessionService:
         user_id = _require_user_session(payload)
         job = dict(payload.get("job") or {})
         resume = dict(payload.get("resume") or {}) if payload.get("resume") else None
-        profile = dict(payload.get("profile") or {})
+        profile = _normalize_profile_snapshot(dict(payload.get("profile") or {}))
         _validate_owned("job", job, user_id)
         if resume:
             _validate_owned("resume", resume, user_id)
         _validate_owned("profile", profile, user_id)
 
         session_id = payload.get("sessionId") or str(uuid.uuid4())
-        platform = payload.get("platform") or _detect_platform(_apply_url(job))
+        apply_url = _resolved_apply_url(payload, job)
+        if not apply_url:
+            raise ValueError("Apply Session requires a resolved apply URL.")
+        platform = payload.get("platform") or _detect_platform(apply_url)
         field_memory = _coerce_memory(payload.get("fieldMemory") or payload.get("savedAnswers") or [])
+        resume = _normalize_resume_metadata(resume, payload.get("resumeUploadPreference") or payload.get("uploadPreference"))
         session = ApplySession(
             session_id=session_id,
             user_id=user_id,
             job=job,
             resume=resume,
             profile=profile,
+            profile_snapshot=profile,
             field_memory=field_memory,
+            saved_answer_snapshot=list(field_memory),
             platform=platform,
-            current_url=_apply_url(job),
+            current_url=apply_url,
+            apply_url=apply_url,
             run_history=[
                 RunLog(
                     event="apply_session_created",
                     message="Created apply session.",
-                    details={"platform": platform, "client": client},
+                    details={"platform": platform, "client": client, "apply_url": apply_url},
                 )
             ],
         )
@@ -128,6 +135,19 @@ class ApplySessionService:
         session = self._require_session(session_id, payload)
         current_url = payload.get("currentUrl") or payload.get("current_url") or session.current_url
         if current_url:
+            if _client_from_payload(payload) == "extension" and not _url_matches_session(session, current_url):
+                session.status = "stale_rejected"
+                session.run_history.append(
+                    RunLog(
+                        event="stale_extension_session_rejected",
+                        message="Extension page URL did not match the Apply Session apply URL.",
+                        level="warning",
+                        details={"current_url": current_url, "apply_url": session.apply_url or session.current_url},
+                    )
+                )
+                session.touch()
+                self.store.save(session)
+                raise ApplySessionAuthError("Apply Session does not match the current employer page.")
             session.current_url = current_url
             session.platform = payload.get("platform") or _detect_platform(current_url)
         session.status = "started"
@@ -152,6 +172,19 @@ class ApplySessionService:
         current_url = payload.get("currentUrl") or payload.get("current_url") or session.current_url
         screenshot_path = payload.get("screenshotPath") or payload.get("screenshot_path")
         if current_url:
+            if _client_from_payload(payload) == "extension" and not _url_matches_session(session, current_url):
+                session.status = "stale_rejected"
+                session.run_history.append(
+                    RunLog(
+                        event="stale_extension_session_rejected",
+                        message="Extension page URL did not match the Apply Session apply URL.",
+                        level="warning",
+                        details={"current_url": current_url, "apply_url": session.apply_url or session.current_url},
+                    )
+                )
+                session.touch()
+                self.store.save(session)
+                raise ApplySessionAuthError("Apply Session does not match the current employer page.")
             session.current_url = current_url
             session.platform = payload.get("platform") or _detect_platform(current_url)
         if page_title:
@@ -159,8 +192,8 @@ class ApplySessionService:
         if screenshot_path:
             session.screenshot_path = screenshot_path
 
-        profile = UserProfile.from_mapping(session.profile)
-        known, unknown = map_fields(fields, profile, session.field_memory + self.memory_store.load())
+        profile = UserProfile.from_mapping(session.profile_snapshot or session.profile)
+        known, unknown = map_fields(fields, profile, session.saved_answer_snapshot + session.field_memory + self.memory_store.load())
         validation = validate_required_fields(fields, known)
         progress = build_page_progress(
             platform=session.platform,
@@ -194,11 +227,29 @@ class ApplySessionService:
         session.touch()
         self.store.save(session)
         response = session.to_client_payload(client=_client_from_payload(payload))
-        response["fieldsDetected"] = [asdict(field) for field in fields]
-        response["fieldsFilled"] = [asdict(item) for item in known]
+        response["fieldsDetected"] = [_field_payload(field) for field in fields]
+        response["fieldsFilled"] = [_mapped_payload(item) for item in known]
         response["fillInstructions"] = [_fill_instruction(item) for item in known] + _resume_fill_instructions(fields, session.resume)
         response["resumeUpload"] = _resume_upload_instruction(session.resume)
         response["runStatus"] = session.status
+        return _with_control_center(response)
+
+    def handoff(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(session_id, payload)
+        token = self._mint_token(session)
+        session.status = "handoff_ready"
+        session.run_history.append(
+            RunLog(
+                event="extension_handoff_ready",
+                message="Prepared extension handoff for the employer application page.",
+                details={"apply_url": session.apply_url or session.current_url},
+            )
+        )
+        session.touch()
+        self.store.save(session)
+        response = session.to_client_payload(extension_token=token, client="extension")
+        response["resumeUpload"] = _resume_upload_instruction(session.resume)
+        response["extensionHandoff"] = _extension_handoff_payload(session, token)
         return _with_control_center(response)
 
     def continue_session(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -334,11 +385,78 @@ def _apply_url(job: dict[str, Any]) -> str | None:
     return job.get("applyUrl") or job.get("apply_url") or job.get("jobUrl") or job.get("job_url") or job.get("url")
 
 
+def _resolved_apply_url(payload: dict[str, Any], job: dict[str, Any]) -> str | None:
+    return payload.get("applyUrl") or payload.get("apply_url") or _apply_url(job)
+
+
 def _detect_platform(url: str | None) -> str:
     for adapter in PLATFORM_ADAPTERS:
         if adapter.detect(url or ""):
             return adapter.name
     return "generic"
+
+
+def _url_matches_session(session: ApplySession, current_url: str) -> bool:
+    expected_url = session.apply_url or session.current_url or _apply_url(session.job)
+    if not expected_url:
+        return True
+    try:
+        from urllib.parse import urlparse
+
+        expected = urlparse(expected_url)
+        actual = urlparse(current_url)
+        if expected.hostname != actual.hostname:
+            return False
+        expected_path = _normalize_url_path(expected.path)
+        actual_path = _normalize_url_path(actual.path)
+        return actual_path.startswith(expected_path) or expected_path.startswith(actual_path)
+    except Exception:
+        return expected_url == current_url
+
+
+def _normalize_url_path(value: str) -> str:
+    value = value.rstrip("/")
+    for suffix in ("/apply", "/application"):
+        if value.casefold().endswith(suffix):
+            value = value[: -len(suffix)]
+    return value or "/"
+
+
+def _normalize_profile_snapshot(profile: dict[str, Any]) -> dict[str, Any]:
+    return UserProfile.from_mapping(profile).__dict__ | {"userId": profile.get("userId") or profile.get("user_id")}
+
+
+def _normalize_resume_metadata(resume: dict[str, Any] | None, upload_preference: Any = None) -> dict[str, Any] | None:
+    if not resume:
+        return None
+    file_name = resume.get("fileName") or resume.get("filename") or resume.get("name") or resume.get("label")
+    mime_type = resume.get("mimeType") or resume.get("mime_type")
+    file_type = resume.get("fileType") or resume.get("file_type")
+    if not file_type and file_name:
+        suffix = Path(str(file_name)).suffix.casefold().lstrip(".")
+        file_type = suffix or None
+    preference = upload_preference or resume.get("uploadPreference") or resume.get("upload_preference") or file_type
+    return {
+        **resume,
+        "fileName": file_name,
+        "mimeType": mime_type,
+        "fileType": str(file_type or "").lower() or None,
+        "uploadPreference": str(preference or "").lower() or None,
+    }
+
+
+def _extension_handoff_payload(session: ApplySession, token: str) -> dict[str, Any]:
+    return {
+        "route": "/api/extension/apply-session/handoff",
+        "installUrl": "/extension/install",
+        "downloadUrl": "/extension/download",
+        "sessionId": session.session_id,
+        "extensionToken": token,
+        "applyUrl": session.apply_url or session.current_url,
+        "jobId": session.job.get("id"),
+        "resumeId": (session.resume or {}).get("id") if session.resume else None,
+        "messageType": "APPLYMATE_SESSION_HANDOFF",
+    }
 
 
 def _coerce_fields(items: list[dict[str, Any]]) -> list[Field]:
@@ -409,6 +527,36 @@ def _fill_instruction(mapped: Any) -> dict[str, Any]:
     }
 
 
+def _field_payload(field: Field) -> dict[str, Any]:
+    return {
+        "id": field.name or field.selector or field.label,
+        "label": field.label,
+        "selector": field.selector,
+        "name": field.name,
+        "fieldType": field.field_type.value if isinstance(field.field_type, FieldType) else str(field.field_type),
+        "required": field.required,
+        "options": list(field.options),
+        "value": field.value,
+        "sensitive": field.sensitive,
+        "normalizedQuestion": field.normalized_question,
+        "confidence": field.confidence,
+    }
+
+
+def _mapped_payload(mapped: Any) -> dict[str, Any]:
+    return {
+        "field": _field_payload(mapped.field),
+        "profileKey": mapped.profile_key,
+        "value": mapped.value,
+        "valueSource": mapped.source,
+        "source": mapped.source,
+        "confidence": mapped.confidence,
+        "requiresReview": mapped.requires_review,
+        "unresolved": False,
+        "sensitive": mapped.field.sensitive,
+    }
+
+
 def _resume_fill_instructions(fields: list[Field], resume: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not resume:
         return []
@@ -436,6 +584,9 @@ def _resume_upload_instruction(resume: dict[str, Any] | None) -> dict[str, Any]:
         "resumeId": resume.get("id") or resume.get("label") if resume else None,
         "fileName": resume.get("fileName") or resume.get("filename") if resume else None,
         "mimeType": resume.get("mimeType") or resume.get("mime_type") if resume else None,
+        "fileType": resume.get("fileType") or resume.get("file_type") if resume else None,
+        "uploadPreference": resume.get("uploadPreference") or resume.get("upload_preference") if resume else None,
+        "browserSecurity": "extension_cannot_set_local_file_path",
     }
 
 
@@ -482,6 +633,15 @@ def _with_control_center(payload: dict[str, Any]) -> dict[str, Any]:
         "sessionId": payload.get("sessionId"),
         "status": payload.get("status"),
         "progress": payload.get("progress") or {},
+        "pageUrl": payload.get("currentUrl") or payload.get("applyUrl"),
+        "platform": payload.get("platform") or "generic",
+        "fieldsDetected": len((payload.get("progress") or {}).get("fields_detected") or payload.get("fieldsDetected") or []),
+        "fieldsFilled": len(payload.get("fieldsFilled") or (payload.get("progress") or {}).get("fields_filled") or []),
+        "unresolvedFields": len(unresolved_fields),
+        "readyForNext": bool((payload.get("progress") or {}).get("ready_for_next")),
+        "readyForSubmit": bool((payload.get("progress") or {}).get("ready_for_submit")),
+        "lastAction": (payload.get("runHistory") or [{}])[-1],
+        "runHistory": payload.get("runHistory") or [],
         "runStatus": payload.get("runStatus") or payload.get("status"),
         "manualAssist": payload["manualAssist"],
     }
@@ -514,6 +674,9 @@ def _session_from_dict(item: dict[str, Any]) -> ApplySession | None:
             ],
             run_history=[RunLog(**entry) for entry in item.get("runHistory") or [] if isinstance(entry, dict)],
             current_url=item.get("currentUrl"),
+            apply_url=item.get("applyUrl"),
+            profile_snapshot=item.get("profileSnapshot") or item.get("profile") or {},
+            saved_answer_snapshot=_coerce_memory(item.get("savedAnswerSnapshot") or []),
             page_title=item.get("pageTitle"),
             screenshot_path=item.get("screenshotPath"),
             created_at=item.get("createdAt") or datetime.now(timezone.utc).isoformat(),

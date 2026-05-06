@@ -19,5 +19,7 @@ export const MESSAGE_TYPES = {
   prepareSubmit: "APPLYMATE_PREPARE_SUBMIT",
   submitConfirmed: "APPLYMATE_SUBMIT_CONFIRMED",
   contentReady: "APPLYMATE_CONTENT_READY",
+  sessionHandoff: "APPLYMATE_SESSION_HANDOFF",
+  sessionLoaded: "APPLYMATE_SESSION_LOADED",
   openPanel: "APPLYMATE_OPEN_PANEL"
 } as const;

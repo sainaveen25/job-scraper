@@ -60,6 +60,12 @@ class UserProfile:
     desired_salary: str | None = None
     available_start_date: str | None = None
     notice_period: str | None = None
+    personal: dict[str, Any] = field(default_factory=dict)
+    education: list[dict[str, Any]] = field(default_factory=list)
+    work_experience: list[dict[str, Any]] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
+    common_questions: dict[str, Any] = field(default_factory=dict)
+    sensitive_answer_rules: dict[str, Any] = field(default_factory=dict)
     extras: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -68,13 +74,20 @@ class UserProfile:
             return value
         if not value:
             return cls()
+        value = _normalize_profile_mapping(value)
         known = {name for name in cls.__dataclass_fields__ if name != "extras"}
         kwargs = {key: val for key, val in value.items() if key in known}
         extras = {key: val for key, val in value.items() if key not in known}
         return cls(**kwargs, extras=extras)
 
     def value_for(self, key: str) -> Any:
-        return getattr(self, key, None) or self.extras.get(key)
+        direct = getattr(self, key, None)
+        if direct not in (None, "", [], {}):
+            return direct
+        nested = self.personal.get(key)
+        if nested not in (None, "", [], {}):
+            return nested
+        return self.extras.get(key)
 
 
 @dataclass
@@ -229,6 +242,9 @@ class ApplySession:
     unresolved_fields: list[UnknownField] = field(default_factory=list)
     run_history: list[RunLog] = field(default_factory=list)
     current_url: str | None = None
+    apply_url: str | None = None
+    profile_snapshot: dict[str, Any] = field(default_factory=dict)
+    saved_answer_snapshot: list[FieldMemoryEntry] = field(default_factory=list)
     page_title: str | None = None
     screenshot_path: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -243,14 +259,17 @@ class ApplySession:
             "job": self.job,
             "resume": self.resume,
             "profile": self.profile,
-            "fieldMemory": [asdict(entry) for entry in self.field_memory],
+            "fieldMemory": [_memory_entry_payload(entry) for entry in self.field_memory],
             "platform": self.platform,
             "status": self.status,
             "progress": self.progress,
-            "unresolvedFields": [asdict(item) for item in self.unresolved_fields],
+            "unresolvedFields": [_unknown_field_payload(item) for item in self.unresolved_fields],
             "runHistory": [asdict(item) for item in self.run_history],
             "pageTitle": self.page_title,
             "currentUrl": self.current_url,
+            "applyUrl": self.apply_url or self.current_url,
+            "profileSnapshot": self.profile_snapshot or self.profile,
+            "savedAnswerSnapshot": [_memory_entry_payload(entry) for entry in self.saved_answer_snapshot],
             "screenshotPath": self.screenshot_path,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
@@ -265,3 +284,111 @@ class ApplySession:
 
     def to_extension_payload(self, *, extension_token: str | None = None) -> dict[str, Any]:
         return self.to_client_payload(extension_token=extension_token, client="extension")
+
+
+def _field_payload(field: Field) -> dict[str, Any]:
+    return {
+        "id": field.name or field.selector or field.label,
+        "label": field.label,
+        "selector": field.selector,
+        "name": field.name,
+        "fieldType": field.field_type.value if isinstance(field.field_type, FieldType) else str(field.field_type),
+        "required": field.required,
+        "options": list(field.options),
+        "value": field.value,
+        "sensitive": field.sensitive,
+        "normalizedQuestion": field.normalized_question,
+        "confidence": field.confidence,
+    }
+
+
+def _unknown_field_payload(item: UnknownField) -> dict[str, Any]:
+    return {
+        "field": _field_payload(item.field),
+        "reason": item.reason,
+        "questionLabel": item.field.label,
+        "normalizedQuestion": item.field.normalized_question,
+        "valueSource": "unresolved",
+        "confidence": item.field.confidence,
+        "unresolved": True,
+        "sensitive": item.field.sensitive,
+    }
+
+
+def _memory_entry_payload(entry: FieldMemoryEntry) -> dict[str, Any]:
+    return {
+        "originalQuestion": entry.original_question,
+        "normalizedQuestion": entry.normalized_question,
+        "answer": entry.answer,
+        "answerType": entry.answer_type,
+        "platform": entry.platform,
+        "sourceUrl": entry.source_url,
+        "confidence": entry.confidence,
+        "sensitive": entry.sensitive,
+        "lastUsedAt": entry.last_used_at,
+    }
+
+
+def _normalize_profile_mapping(value: dict[str, Any]) -> dict[str, Any]:
+    personal = dict(value.get("personal") or {})
+    employment = dict(value.get("employment") or {})
+    common_questions = {
+        _normalize_question_key(key): val
+        for key, val in dict(value.get("common_questions") or employment.get("common_questions") or {}).items()
+    }
+    normalized: dict[str, Any] = {**value}
+    normalized["personal"] = personal
+    normalized["education"] = list(value.get("education") or [])
+    normalized["work_experience"] = list(value.get("work_experience") or value.get("experience") or [])
+    normalized["skills"] = _normalize_skills(value.get("skills") or [])
+    normalized["common_questions"] = common_questions
+    normalized["sensitive_answer_rules"] = {
+        _normalize_question_key(key): val
+        for key, val in dict(value.get("sensitive_answer_rules") or value.get("approved_sensitive_answer_rules") or {}).items()
+    }
+    aliases = {
+        "first_name": ("first_name", "given_name"),
+        "last_name": ("last_name", "family_name", "surname"),
+        "full_name": ("full_name", "name"),
+        "email": ("email",),
+        "phone": ("phone", "mobile"),
+        "city": ("city",),
+        "state": ("state", "region", "province"),
+        "zip": ("zip", "postal_code", "postcode"),
+        "country": ("country",),
+        "linkedin_url": ("linkedin_url", "linkedin"),
+        "github_url": ("github_url", "github"),
+        "portfolio_url": ("portfolio_url", "portfolio", "website"),
+    }
+    for target, keys in aliases.items():
+        if normalized.get(target) in (None, ""):
+            for key in keys:
+                candidate = personal.get(key) or value.get(key)
+                if candidate not in (None, ""):
+                    normalized[target] = candidate
+                    break
+    return normalized
+
+
+def _normalize_skills(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        skills: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                skills.append(item.strip())
+            elif isinstance(item, dict):
+                name = item.get("name") or item.get("label")
+                if name:
+                    skills.append(str(name).strip())
+        return skills
+    return []
+
+
+def _normalize_question_key(value: Any) -> str:
+    import re
+
+    text = str(value or "").casefold()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()

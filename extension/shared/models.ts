@@ -79,6 +79,7 @@ export interface ApplySessionPayload {
   profile?: Record<string, unknown>;
   fieldMemory?: Array<Record<string, unknown>>;
   platform: Platform;
+  applyUrl?: string;
   status?: string;
   progress?: Record<string, unknown>;
   unresolvedFields?: UnknownFieldPayload[];
@@ -101,6 +102,17 @@ export interface ApplySessionPayload {
   };
   error?: string;
   ok?: boolean;
+  extensionHandoff?: {
+    route: string;
+    installUrl: string;
+    downloadUrl: string;
+    sessionId: string;
+    extensionToken: string;
+    applyUrl?: string;
+    jobId?: string;
+    resumeId?: string;
+    messageType: string;
+  };
 }
 
 export interface RuntimeRequest {

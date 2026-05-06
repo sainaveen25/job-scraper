@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from automation.apply_sessions import ApplySessionService
+from automation.memory import FieldMemoryStore
+from automation.profile_store import ProfileStore
+from automation.resume_import import hydrate_profile_from_resume, preview_resume_profile_merge
 from automation.runner import (
     continue_application,
     prepare_application,
@@ -13,6 +16,9 @@ from automation.runner import (
 
 
 _APPLY_SESSION_SERVICE = ApplySessionService()
+_PROFILE_STORE = ProfileStore()
+_FIELD_MEMORY_STORE = FieldMemoryStore()
+_THEME_PREFERENCES: dict[str, str] = {}
 
 
 def post_apply_prepare(payload: dict[str, Any]) -> dict[str, Any]:
@@ -50,6 +56,11 @@ def post_apply_session_create(payload: dict[str, Any]) -> dict[str, Any]:
     return _APPLY_SESSION_SERVICE.create(payload, client="web")
 
 
+def post_apply_session_handoff(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Callable equivalent of POST /api/apply-session/:id/extension-handoff."""
+    return _APPLY_SESSION_SERVICE.handoff(session_id, {**payload, "client": "web"})
+
+
 def get_apply_session(session_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Callable equivalent of GET /api/apply-session/:id for the website flow."""
     return _APPLY_SESSION_SERVICE.get(session_id, payload or {})
@@ -83,6 +94,67 @@ def post_apply_session_submit(session_id: str, payload: dict[str, Any]) -> dict[
 def post_extension_apply_session_create(payload: dict[str, Any]) -> dict[str, Any]:
     """Callable equivalent of POST /api/extension/apply-session/create."""
     return _APPLY_SESSION_SERVICE.create(payload, issue_extension_token=True, client="extension")
+
+
+def post_extension_apply_session_handoff(payload: dict[str, Any]) -> dict[str, Any]:
+    """Callable equivalent of POST /api/extension/apply-session/handoff."""
+    session_id = str(payload.get("sessionId") or payload.get("session_id") or "")
+    return _APPLY_SESSION_SERVICE.handoff(session_id, payload)
+
+
+def get_extension_install() -> dict[str, Any]:
+    """Stable extension install metadata route for web apps that previously hit a 404."""
+    return {
+        "ok": True,
+        "installUrl": "/extension/install",
+        "downloadUrl": "/extension/download",
+        "packageName": "applymate-ai-extension",
+        "manualAssistAvailable": True,
+    }
+
+
+def get_theme_preference(payload: dict[str, Any]) -> dict[str, Any]:
+    user_id = str(payload.get("userId") or payload.get("user_id") or (payload.get("auth") or {}).get("userId") or "anonymous")
+    return {"userId": user_id, "theme": _THEME_PREFERENCES.get(user_id, "system")}
+
+
+def post_theme_preference(payload: dict[str, Any]) -> dict[str, Any]:
+    user_id = str(payload.get("userId") or payload.get("user_id") or (payload.get("auth") or {}).get("userId") or "anonymous")
+    theme = str(payload.get("theme") or "system")
+    if theme not in {"light", "dark", "system"}:
+        raise ValueError("theme must be light, dark, or system")
+    _THEME_PREFERENCES[user_id] = theme
+    return {"userId": user_id, "theme": theme, "status": "saved"}
+
+
+def get_profile(user_id: str) -> dict[str, Any]:
+    return {"userId": user_id, "profile": _PROFILE_STORE.load(user_id)}
+
+
+def post_profile_update(payload: dict[str, Any]) -> dict[str, Any]:
+    user_id = str(payload.get("userId") or payload.get("user_id") or (payload.get("auth") or {}).get("userId"))
+    profile = _PROFILE_STORE.merge(user_id, dict(payload.get("profile") or payload), source="manual")
+    return {"userId": user_id, "profile": profile, "status": "saved"}
+
+
+def post_resume_import_preview(payload: dict[str, Any]) -> dict[str, Any]:
+    return preview_resume_profile_merge(dict(payload.get("currentProfile") or {}), dict(payload.get("parsedResume") or {}))
+
+
+def post_resume_import_hydrate(payload: dict[str, Any]) -> dict[str, Any]:
+    user_id = str(payload.get("userId") or payload.get("user_id") or (payload.get("auth") or {}).get("userId"))
+    return hydrate_profile_from_resume(
+        user_id=user_id,
+        parsed_resume=dict(payload.get("parsedResume") or {}),
+        profile_store=_PROFILE_STORE,
+        resume_path=payload.get("resumePath"),
+        resume_id=payload.get("resumeId"),
+    )
+
+
+def get_questionnaire_status(user_id: str) -> dict[str, Any]:
+    answers = [entry for entry in _FIELD_MEMORY_STORE.load() if not entry.sensitive]
+    return {"userId": user_id, "answers": [entry.__dict__ for entry in answers], "status": "ready"}
 
 
 def get_extension_apply_session(session_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:

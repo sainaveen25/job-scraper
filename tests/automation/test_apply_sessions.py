@@ -79,6 +79,20 @@ def test_extension_token_can_fetch_session_without_user_session_token(tmp_path):
     assert fetched["job"]["id"] == "job_1"
 
 
+def test_apply_session_handoff_attaches_resume_and_extension_route(tmp_path):
+    service = _service(tmp_path)
+    created = service.create(_create_payload())
+
+    handoff = service.handoff(created["sessionId"], {"auth": _auth()})
+
+    assert handoff["extensionToken"]
+    assert handoff["extensionHandoff"]["route"] == "/api/extension/apply-session/handoff"
+    assert handoff["extensionHandoff"]["installUrl"] == "/extension/install"
+    assert handoff["extensionHandoff"]["applyUrl"] == "https://jobs.lever.co/acme/123"
+    assert handoff["resumeUpload"]["fileType"] == "pdf"
+    assert handoff["resumeUpload"]["uploadPreference"] == "pdf"
+
+
 def test_fill_page_returns_browser_agnostic_manual_assist(tmp_path):
     service = _service(tmp_path)
     created = service.create(_create_payload())
@@ -158,6 +172,44 @@ def test_extension_flow_still_issues_optional_token_and_fill_instructions(tmp_pa
     assert result["manualAssist"]["canUseWithoutExtension"]
 
 
+def test_extension_rejects_stale_page_session(tmp_path):
+    service = _service(tmp_path)
+    created = service.create(_create_payload(), issue_extension_token=True, client="extension")
+
+    with pytest.raises(ApplySessionAuthError):
+        service.fill_page(
+            created["sessionId"],
+            {
+                "extensionToken": created["extensionToken"],
+                "currentUrl": "https://boards.greenhouse.io/other/jobs/999",
+                "fields": [{"label": "First Name", "selector": "#first", "type": "text"}],
+            },
+        )
+
+
+def test_control_center_reports_real_page_state(tmp_path):
+    service = _service(tmp_path)
+    created = service.create(_create_payload())
+
+    result = service.fill_page(
+        created["sessionId"],
+        {
+            "auth": _auth(),
+            "currentUrl": "https://jobs.lever.co/acme/123/apply",
+            "fields": [{"label": "Email", "selector": "#email", "type": "text", "required": True}],
+            "hasSubmit": True,
+        },
+    )
+
+    center = result["webControlCenter"]
+    assert center["pageUrl"] == "https://jobs.lever.co/acme/123/apply"
+    assert center["platform"] == "lever"
+    assert center["fieldsDetected"] == 1
+    assert center["fieldsFilled"] == 1
+    assert center["unresolvedFields"] == 0
+    assert center["readyForSubmit"] is True
+
+
 def test_save_answer_clears_matching_unresolved_field_and_updates_history(tmp_path):
     service = _service(tmp_path)
     created = service.create(_create_payload())
@@ -200,6 +252,33 @@ def test_save_answer_refuses_third_party_passwords(tmp_path):
                 "answerType": "password",
             },
         )
+
+
+def test_profile_common_questions_power_autofill_without_sensitive_guessing(tmp_path):
+    service = _service(tmp_path)
+    payload = _create_payload()
+    payload["profile"]["common_questions"] = {"years of python experience": "6"}
+    payload["profile"]["sensitive_answer_rules"] = {
+        "veteran status": {"approved": True, "value": "I decline to answer"}
+    }
+    created = service.create(payload, issue_extension_token=True, client="extension")
+
+    result = service.fill_page(
+        created["sessionId"],
+        {
+            "extensionToken": created["extensionToken"],
+            "currentUrl": "https://jobs.lever.co/acme/123",
+            "fields": [
+                {"label": "Years of Python experience", "selector": "#python", "type": "text"},
+                {"label": "Veteran status", "selector": "#veteran", "type": "select"},
+                {"label": "Gender", "selector": "#gender", "type": "select"},
+            ],
+        },
+    )
+
+    assert [item["value"] for item in result["fieldsFilled"]] == ["6", "I decline to answer"]
+    assert result["fieldsFilled"][1]["requiresReview"] is True
+    assert result["unresolvedFields"][0]["reason"] == "sensitive_question_requires_review"
 
 
 def test_submit_requires_explicit_confirmation(tmp_path):

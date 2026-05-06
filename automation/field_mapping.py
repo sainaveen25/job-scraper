@@ -95,6 +95,18 @@ def map_fields(
             unknown.append(UnknownField(field, "password_requires_manual_entry"))
             continue
         if field.sensitive:
+            approved_value = _approved_sensitive_value(field, profile)
+            if approved_value not in (None, ""):
+                known.append(
+                    MappedField(
+                        field=field,
+                        value=_coerce_answer(approved_value, field.field_type),
+                        source="approved_sensitive_answer",
+                        confidence=1.0,
+                        requires_review=True,
+                    )
+                )
+                continue
             unknown.append(UnknownField(field, "sensitive_question_requires_review"))
             continue
 
@@ -109,6 +121,19 @@ def map_fields(
                     source="profile",
                     confidence=confidence,
                     requires_review=confidence < 0.8,
+                )
+            )
+            continue
+
+        common_answer = _common_question_value(field, profile)
+        if common_answer not in (None, ""):
+            known.append(
+                MappedField(
+                    field=field,
+                    value=_coerce_answer(common_answer, field.field_type),
+                    source="common_questions",
+                    confidence=0.9,
+                    requires_review=False,
                 )
             )
             continue
@@ -130,3 +155,16 @@ def map_fields(
         unknown.append(UnknownField(field, "unmapped"))
 
     return known, unknown
+
+
+def _common_question_value(field: Field, profile: UserProfile) -> Any:
+    questions = profile.common_questions or profile.extras.get("common_questions") or {}
+    return questions.get(field.normalized_question) or questions.get(normalize_question(field.label))
+
+
+def _approved_sensitive_value(field: Field, profile: UserProfile) -> Any:
+    rules = profile.sensitive_answer_rules or profile.extras.get("sensitive_answer_rules") or {}
+    rule = rules.get(field.normalized_question) or rules.get(normalize_question(field.label))
+    if not isinstance(rule, dict) or not rule.get("approved"):
+        return None
+    return rule.get("value") or _common_question_value(field, profile)
