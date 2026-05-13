@@ -294,7 +294,7 @@ class ScraplingMCPServer:
 
         entry = self._get_session(session_id, expected_type=None)
 
-        screenshot_kwargs: Dict[str, Any] = {"type": image_type, "full_page": full_page}
+        screenshot_kwargs: Dict[str, Any] = {"type": image_type, "full_page": full_page, "timeout": timeout}
         if quality is not None:
             screenshot_kwargs["quality"] = quality
 

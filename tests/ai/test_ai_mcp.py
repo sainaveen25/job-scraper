@@ -274,9 +274,10 @@ class TestScreenshot:
     @pytest.mark.asyncio
     async def test_screenshot_with_stealthy_session(self, server, test_url):
         """PNG screenshot via a stealthy session"""
-        opened = await server.open_session(session_type="stealthy", headless=True)
+        # Stealthy mode has fingerprint-spoofing overhead; 60 s avoids false timeouts.
+        opened = await server.open_session(session_type="stealthy", headless=True, timeout=60000)
         try:
-            result = await server.screenshot(url=test_url, session_id=opened.session_id)
+            result = await server.screenshot(url=test_url, session_id=opened.session_id, timeout=60000)
             assert isinstance(result[0], ImageContent)
             assert result[0].mimeType == "image/png"
         finally:
