@@ -103,6 +103,27 @@ class ApplySessionService:
         platform = payload.get("platform") or _detect_platform(apply_url)
         field_memory = _coerce_memory(payload.get("fieldMemory") or payload.get("savedAnswers") or [])
         resume = _normalize_resume_metadata(resume, payload.get("resumeUploadPreference") or payload.get("uploadPreference"))
+        # --- Scoring & context extraction ----------------------------------
+        match_score, score_source = _normalize_score(
+            payload.get("matchScore") or payload.get("match_score")
+            or job.get("matchScore") or job.get("match_score")
+            or job.get("relevanceScore") or job.get("relevance_score")
+            or job.get("rankingScore") or job.get("ranking_score")
+            or job.get("atsScore") or job.get("ats_score")
+            or job.get("score"),
+            payload=payload,
+            job=job,
+        )
+        resume_kind = (
+            payload.get("resumeKind") or payload.get("resume_kind")
+            or (resume or {}).get("resumeKind") or (resume or {}).get("resume_kind")
+        )
+        domain = (
+            payload.get("domain") or payload.get("category")
+            or job.get("domain") or job.get("category")
+        )
+        application_answers = list(payload.get("applicationAnswers") or payload.get("application_answers") or [])
+        # -------------------------------------------------------------------
         session = ApplySession(
             session_id=session_id,
             user_id=user_id,
@@ -115,6 +136,11 @@ class ApplySessionService:
             platform=platform,
             current_url=apply_url,
             apply_url=apply_url,
+            match_score=match_score,
+            score_source=score_source,
+            resume_kind=resume_kind,
+            domain=domain,
+            application_answers=application_answers,
             run_history=[
                 RunLog(
                     event="apply_session_created",
@@ -396,6 +422,55 @@ def _detect_platform(url: str | None) -> str:
     return "generic"
 
 
+def _normalize_score(
+    raw_score: Any,
+    *,
+    payload: dict[str, Any],
+    job: dict[str, Any],
+) -> tuple[float | None, str | None]:
+    """
+    Normalise a score to 0–100 and identify its source.
+
+    Priority order for score lookup:
+      1. payload-level matchScore / match_score
+      2. job-level atsScore / ats_score  → source = "ats_match"
+      3. job-level relevanceScore        → source = "relevance"
+      4. job-level rankingScore          → source = "ranking"
+      5. job-level score                 → source = "provided"
+
+    Returns:
+      (normalized_score: float | None, score_source: str | None)
+    """
+    def _try_float(v: Any) -> float | None:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    # Determine source tag alongside the raw value.
+    scored_candidates: list[tuple[Any, str]] = [
+        (payload.get("matchScore") or payload.get("match_score"), "provided"),
+        (job.get("atsScore") or job.get("ats_score"), "ats_match"),
+        (job.get("relevanceScore") or job.get("relevance_score"), "relevance"),
+        (job.get("rankingScore") or job.get("ranking_score"), "ranking"),
+        (job.get("score"), "provided"),
+    ]
+
+    for raw, source in scored_candidates:
+        value = _try_float(raw)
+        if value is None:
+            continue
+        # Normalise: values ≤ 1.0 are treated as fractions (0.0–1.0 → 0–100).
+        if 0.0 <= value <= 1.0:
+            return round(value * 100, 1), source
+        # Values already in 0–100 range.
+        if 0.0 < value <= 100.0:
+            return round(value, 1), source
+        # Values > 100 — clamp.
+        return 100.0, source
+
+    return None, None
+
 def _url_matches_session(session: ApplySession, current_url: str) -> bool:
     expected_url = session.apply_url or session.current_url or _apply_url(session.job)
     if not expected_url:
@@ -446,16 +521,64 @@ def _normalize_resume_metadata(resume: dict[str, Any] | None, upload_preference:
 
 
 def _extension_handoff_payload(session: ApplySession, token: str) -> dict[str, Any]:
+    job = session.job or {}
+    resume = session.resume or {}
+    profile_snapshot = session.profile_snapshot or session.profile or {}
+
+    # Profile links
+    profile_links = {
+        "linkedinUrl": profile_snapshot.get("linkedin_url") or profile_snapshot.get("linkedinUrl"),
+        "githubUrl": profile_snapshot.get("github_url") or profile_snapshot.get("githubUrl"),
+        "portfolioUrl": profile_snapshot.get("portfolio_url") or profile_snapshot.get("portfolioUrl"),
+    }
+
+    # Selected resume metadata
+    selected_resume_meta = {
+        "id": resume.get("id"),
+        "fileName": resume.get("fileName") or resume.get("filename"),
+        "fileType": resume.get("fileType") or resume.get("file_type"),
+        "resumeKind": session.resume_kind or resume.get("resumeKind") or resume.get("resume_kind"),
+        "label": resume.get("label"),
+    }
+
+    # Platform support map (known platforms the extension handles natively)
+    from automation.platforms import PLATFORM_ADAPTERS
+    platform_support = {adapter.name: True for adapter in PLATFORM_ADAPTERS}
+    platform_support.setdefault("generic", True)
+
     return {
         "route": "/api/extension/apply-session/handoff",
         "installUrl": "/extension/install",
         "downloadUrl": "/extension/download",
+        "messageType": "APPLYMATE_SESSION_HANDOFF",
+        # Session identity
         "sessionId": session.session_id,
         "extensionToken": token,
         "applyUrl": session.apply_url or session.current_url,
-        "jobId": session.job.get("id"),
-        "resumeId": (session.resume or {}).get("id") if session.resume else None,
-        "messageType": "APPLYMATE_SESSION_HANDOFF",
+        "jobId": job.get("id"),
+        "resumeId": resume.get("id"),
+        # Job display fields
+        "jobTitle": job.get("title"),
+        "company": job.get("company"),
+        "descriptionPreview": (
+            job.get("descriptionPreview")
+            or job.get("description_preview")
+            or (job.get("description") or "")[:300] or None
+        ),
+        # Resume context
+        "resumeKind": session.resume_kind,
+        "selectedResumeMeta": selected_resume_meta,
+        # Scoring
+        "matchScore": session.match_score,
+        "scoreSource": session.score_source,
+        # Domain / category
+        "domain": session.domain,
+        "category": session.domain,
+        # Profile links
+        "profileLinks": profile_links,
+        # Platform support
+        "platformSupport": platform_support,
+        "platform": session.platform,
     }
 
 
@@ -679,6 +802,11 @@ def _session_from_dict(item: dict[str, Any]) -> ApplySession | None:
             saved_answer_snapshot=_coerce_memory(item.get("savedAnswerSnapshot") or []),
             page_title=item.get("pageTitle"),
             screenshot_path=item.get("screenshotPath"),
+            match_score=item.get("matchScore"),
+            score_source=item.get("scoreSource"),
+            resume_kind=item.get("resumeKind"),
+            domain=item.get("domain"),
+            application_answers=list(item.get("applicationAnswers") or []),
             created_at=item.get("createdAt") or datetime.now(timezone.utc).isoformat(),
             updated_at=item.get("updatedAt") or datetime.now(timezone.utc).isoformat(),
         )

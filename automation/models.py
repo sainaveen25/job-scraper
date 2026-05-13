@@ -247,6 +247,18 @@ class ApplySession:
     saved_answer_snapshot: list[FieldMemoryEntry] = field(default_factory=list)
     page_title: str | None = None
     screenshot_path: str | None = None
+    # --- Scoring & context fields -----------------------------------------
+    # match_score:  0–100 normalised score (None if not computable).
+    # score_source: where the score came from (ats_match | relevance | ranking | provided).
+    # resume_kind:  "base" or "tailored" — which variant was selected.
+    # domain:       job category/domain (e.g. "data_engineering").
+    # application_answers: confirmed field answers accumulated during the session.
+    match_score: float | None = None
+    score_source: str | None = None
+    resume_kind: str | None = None
+    domain: str | None = None
+    application_answers: list[dict[str, Any]] = field(default_factory=list)
+    # -----------------------------------------------------------------------
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -277,6 +289,13 @@ class ApplySession:
             "extensionOptional": True,
             "manualAssistAvailable": True,
             "submitRequiresExplicitConfirmation": True,
+            # --- Scoring & context fields ----------------------------------
+            "matchScore": self.match_score,
+            "scoreSource": self.score_source,
+            "resumeKind": self.resume_kind,
+            "domain": self.domain,
+            "applicationAnswers": list(self.application_answers),
+            # ---------------------------------------------------------------
         }
         if extension_token:
             payload["extensionToken"] = extension_token
