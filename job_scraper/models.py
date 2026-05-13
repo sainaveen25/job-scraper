@@ -27,6 +27,10 @@ class JobPosting:
     source_url: str = ""
     job_url: str = ""
     description: str | None = None
+    raw_description: str | None = None
+    description_text: str | None = None
+    description_html_safe: str | None = None
+    description_preview: str | None = None
     required_skills: list[str] = field(default_factory=list)
     preferred_skills: list[str] = field(default_factory=list)
     ats_keywords: list[str] = field(default_factory=list)
@@ -60,6 +64,10 @@ class JobPosting:
             "source_url": self.source_url,
             "job_url": self.job_url,
             "description": self.description,
+            "raw_description": self.raw_description,
+            "description_text": self.description_text,
+            "description_html_safe": self.description_html_safe,
+            "description_preview": self.description_preview,
             "required_skills": self.required_skills,
             "preferred_skills": self.preferred_skills,
             "ats_keywords": self.ats_keywords,

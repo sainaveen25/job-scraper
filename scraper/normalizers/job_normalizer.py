@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from job_scraper.description_cleaner import clean_description
 from job_scraper.normalization import (
     choose_posted_at,
     generate_search_terms,
@@ -81,7 +82,9 @@ def normalize_job(raw_job: dict[str, Any], default_source: str = "scrapling") ->
     if not title or not job_url:
         return None
 
-    description = _clean_text(_pick_first(raw_job, "description", "details", "summary", "body", "content"))
+    _raw_desc = _pick_first(raw_job, "description", "details", "summary", "body", "content")
+    _desc_bundle = clean_description(_raw_desc)
+    description = _desc_bundle.description_text
     required_skills = _normalize_list(_pick_first(raw_job, "requiredSkills", "required_skills", "skills"))
     preferred_skills = _normalize_list(_pick_first(raw_job, "preferredSkills", "preferred_skills"))
     ats_keywords = _normalize_list(_pick_first(raw_job, "atsKeywords", "ats_keywords", "keywords"))
@@ -140,7 +143,18 @@ def normalize_job(raw_job: dict[str, Any], default_source: str = "scrapling") ->
         ),
         "source_url": _clean_text(_pick_first(raw_job, "sourceUrl", "source_url", "listing_url", "source_link")),
         "job_url": job_url,
-        "description": description,
+        # --- Description fields (4 clean variants) -------------------------
+        # raw_description: original scraper output, for audit/debug only.
+        # description_text: full clean plain text — use for AI prompts, ATS.
+        # description_html_safe: sanitised HTML — use for full job detail view.
+        # description_preview: ≤300-char excerpt — use for job cards.
+        # description (backward-compat): same as description_text.
+        "raw_description": _desc_bundle.raw_description,
+        "description_text": _desc_bundle.description_text,
+        "description_html_safe": _desc_bundle.description_html_safe,
+        "description_preview": _desc_bundle.description_preview,
+        "description": _desc_bundle.description_text,  # backward-compat alias
+        # -------------------------------------------------------------------
         "required_skills": required_skills,
         "preferred_skills": preferred_skills,
         "ats_keywords": ats_keywords,
@@ -159,7 +173,7 @@ def normalize_job(raw_job: dict[str, Any], default_source: str = "scrapling") ->
         "raw_payload": copy.deepcopy(raw_job),
     }
 
-    # Backwards-compatible Lovable keys.
+    # Backwards-compatible Lovable/camelCase keys.
     normalized["jobUrl"] = normalized["job_url"]
     normalized["sourceUrl"] = normalized["source_url"]
     normalized["sourceExternalId"] = normalized["source_external_id"]
@@ -172,6 +186,11 @@ def normalize_job(raw_job: dict[str, Any], default_source: str = "scrapling") ->
     normalized["preferredSkills"] = normalized["preferred_skills"]
     normalized["atsKeywords"] = normalized["ats_keywords"]
     normalized["domainTerms"] = normalized["domain_terms"]
+    # Description camelCase aliases for Lovable/Supabase.
+    normalized["descriptionText"] = normalized["description_text"]
+    normalized["descriptionHtmlSafe"] = normalized["description_html_safe"]
+    normalized["descriptionPreview"] = normalized["description_preview"]
+    normalized["rawDescription"] = normalized["raw_description"]
 
     return normalized
 
