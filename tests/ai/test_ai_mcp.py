@@ -274,8 +274,14 @@ class TestScreenshot:
     @pytest.mark.asyncio
     async def test_screenshot_with_stealthy_session(self, server, test_url):
         """PNG screenshot via a stealthy session"""
-        # Stealthy mode has fingerprint-spoofing overhead; 60 s avoids false timeouts.
-        opened = await server.open_session(session_type="stealthy", headless=True, timeout=60000)
+        # disable_resources=True blocks font requests entirely, avoiding a patchright
+        # bug where page.screenshot() hangs after reporting "fonts loaded" in stealthy mode.
+        opened = await server.open_session(
+            session_type="stealthy",
+            headless=True,
+            timeout=60000,
+            disable_resources=True,
+        )
         try:
             result = await server.screenshot(url=test_url, session_id=opened.session_id, timeout=60000)
             assert isinstance(result[0], ImageContent)
